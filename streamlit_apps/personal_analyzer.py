@@ -94,7 +94,7 @@ def init_session_state():
 # 3. 분석 실행
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async def run_analysis(stock_code: str, stock_name: str) -> dict:
+async def run_analysis(stock_code: str, stock_name: str, progress_callback=None) -> dict:
     """
     분석 실행 (기존 cores/analysis.py 호출)
 
@@ -104,6 +104,7 @@ async def run_analysis(stock_code: str, stock_name: str) -> dict:
     Args:
         stock_code: 종목코드
         stock_name: 종목명
+        progress_callback: 진행 상황 콜백 함수
 
     Returns:
         분석 결과 딕셔너리
@@ -111,12 +112,58 @@ async def run_analysis(stock_code: str, stock_name: str) -> dict:
     try:
         # ✅ 허용: 기존 모듈 import (수정 안 함)
         from cores.analysis import analyze_stock
+        import asyncio
 
-        # ✅ 허용: 기존 함수 호출
-        result = await analyze_stock(
-            company_code=stock_code,
-            company_name=stock_name
+        # 분석 단계 정의
+        analysis_steps = [
+            ("데이터 수집 준비", 5),
+            ("주가 및 거래량 분석 (Technical Analyst)", 20),
+            ("투자자 거래 동향 분석 (Trading Flow Analyst)", 35),
+            ("재무 분석 (Financial Analyst)", 50),
+            ("산업 분석 (Industry Analyst)", 65),
+            ("뉴스 분석 (Information Analyst)", 75),
+            ("시장 분석 (Market Analyst)", 85),
+            ("투자 전략 수립 (Investment Strategist)", 95),
+            ("최종 보고서 생성", 100),
+        ]
+
+        # 분석 태스크 시작
+        analysis_task = asyncio.create_task(
+            analyze_stock(
+                company_code=stock_code,
+                company_name=stock_name
+            )
         )
+
+        # 진행률 시뮬레이션 (cores/analysis.py는 수정 불가이므로)
+        if progress_callback:
+            for step_name, progress in analysis_steps[:-1]:
+                if not analysis_task.done():
+                    progress_callback(step_name, progress)
+                    await asyncio.sleep(15)  # 각 단계당 약 15초 예상
+
+        # 분석 완료 대기
+        markdown_result = await analysis_task
+
+        # 마지막 진행률
+        if progress_callback:
+            progress_callback("최종 보고서 생성", 100)
+
+        # 결과를 딕셔너리로 변환
+        result = {
+            'company_code': stock_code,
+            'company_name': stock_name,
+            'full_report': markdown_result,
+            # 마크다운에서 섹션 추출 (간단한 파싱)
+            'summary': extract_section(markdown_result, '핵심 투자 포인트'),
+            'technical_analysis': extract_section(markdown_result, '주가 및 거래량 분석'),
+            'trading_flow': extract_section(markdown_result, '투자자 거래 동향 분석'),
+            'financial_analysis': extract_section(markdown_result, '기업 현황 분석'),
+            'industry_analysis': extract_section(markdown_result, '기업 개요 분석'),
+            'news_analysis': extract_section(markdown_result, '최근 주요 뉴스'),
+            'market_analysis': extract_section(markdown_result, '시장 분석'),
+            'investment_strategy': extract_section(markdown_result, '투자 전략'),
+        }
 
         return result
 
@@ -126,40 +173,40 @@ async def run_analysis(stock_code: str, stock_name: str) -> dict:
         raise Exception(f"분석 실패: {str(e)}")
 
 
+def extract_section(markdown: str, section_title: str) -> str:
+    """
+    마크다운에서 특정 섹션 추출
+
+    Args:
+        markdown: 전체 마크다운 텍스트
+        section_title: 섹션 제목
+
+    Returns:
+        추출된 섹션 내용
+    """
+    import re
+
+    # 섹션 찾기 (# 또는 ## 로 시작)
+    pattern = rf'#+\s*{re.escape(section_title)}.*?\n(.*?)(?=\n#+\s|\Z)'
+    match = re.search(pattern, markdown, re.DOTALL | re.IGNORECASE)
+
+    if match:
+        return match.group(1).strip()
+
+    return f"*{section_title} 내용을 찾을 수 없습니다.*"
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 4. 결과 표시
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def display_result(result: dict):
-    """분석 결과 표시"""
+    """분석 결과 표시 (차트 포함)"""
 
     st.success("✅ 분석 완료!")
 
-    # 상단 메트릭
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        current_price = result.get('current_price', 0)
-        change_percent = result.get('change_percent', 0)
-        st.metric(
-            "현재가",
-            format_currency(current_price) if current_price else "정보 없음",
-            format_percentage(change_percent) if change_percent else None
-        )
-
-    with col2:
-        buy_score = result.get('buy_score', 0)
-        st.metric(
-            "매수 점수",
-            f"{buy_score}/10" if buy_score else "정보 없음"
-        )
-
-    with col3:
-        target_price = result.get('target_price', 0)
-        st.metric(
-            "목표가",
-            format_currency(target_price) if target_price else "정보 없음"
-        )
+    # 종목 정보 표시
+    st.subheader(f"📊 {result.get('company_name', '')} ({result.get('company_code', '')})")
 
     st.divider()
 
@@ -176,28 +223,54 @@ def display_result(result: dict):
     ])
 
     with tabs[0]:
-        st.markdown(result.get('summary', '분석 결과가 없습니다.'))
+        # 요약 섹션
+        st.markdown("### 📌 핵심 투자 포인트")
+        summary_content = result.get('summary', '분석 결과가 없습니다.')
+        # HTML 차트 포함 렌더링
+        st.markdown(summary_content, unsafe_allow_html=True)
 
     with tabs[1]:
-        st.markdown(result.get('technical_analysis', '분석 결과가 없습니다.'))
+        # 기술적 분석 (차트 포함)
+        st.markdown("### 📈 기술적 분석")
+        technical_content = result.get('technical_analysis', '분석 결과가 없습니다.')
+        # HTML 차트가 포함된 마크다운 렌더링
+        st.markdown(technical_content, unsafe_allow_html=True)
 
     with tabs[2]:
-        st.markdown(result.get('trading_flow', '분석 결과가 없습니다.'))
+        # 거래 동향
+        st.markdown("### 💼 투자자 거래 동향")
+        trading_content = result.get('trading_flow', '분석 결과가 없습니다.')
+        st.markdown(trading_content, unsafe_allow_html=True)
 
     with tabs[3]:
-        st.markdown(result.get('financial_analysis', '분석 결과가 없습니다.'))
+        # 재무 분석
+        st.markdown("### 💰 재무 분석")
+        financial_content = result.get('financial_analysis', '분석 결과가 없습니다.')
+        st.markdown(financial_content, unsafe_allow_html=True)
 
     with tabs[4]:
-        st.markdown(result.get('industry_analysis', '분석 결과가 없습니다.'))
+        # 산업 분석
+        st.markdown("### 🏢 산업 분석")
+        industry_content = result.get('industry_analysis', '분석 결과가 없습니다.')
+        st.markdown(industry_content, unsafe_allow_html=True)
 
     with tabs[5]:
-        st.markdown(result.get('news_analysis', '분석 결과가 없습니다.'))
+        # 뉴스 분석
+        st.markdown("### 📰 최근 뉴스")
+        news_content = result.get('news_analysis', '분석 결과가 없습니다.')
+        st.markdown(news_content, unsafe_allow_html=True)
 
     with tabs[6]:
-        st.markdown(result.get('market_analysis', '분석 결과가 없습니다.'))
+        # 시장 분석
+        st.markdown("### 📊 시장 분석")
+        market_content = result.get('market_analysis', '분석 결과가 없습니다.')
+        st.markdown(market_content, unsafe_allow_html=True)
 
     with tabs[7]:
-        st.markdown(result.get('investment_strategy', '분석 결과가 없습니다.'))
+        # 투자 전략
+        st.markdown("### 🎯 투자 전략 및 AI 의견")
+        strategy_content = result.get('investment_strategy', '분석 결과가 없습니다.')
+        st.markdown(strategy_content, unsafe_allow_html=True)
 
     # PDF 다운로드
     st.divider()
@@ -374,20 +447,37 @@ def main():
         if code and name:
             st.info(f"📊 {name}({code}) 분석을 시작합니다...")
 
-            with st.spinner(f"분석 중... (2~3분 소요)"):
-                try:
-                    # ✅ 허용: 기존 함수 호출
-                    result = asyncio.run(run_analysis(code, name))
+            # 진행 상황 표시 영역
+            progress_container = st.container()
+            progress_bar = progress_container.progress(0)
+            status_text = progress_container.empty()
 
-                    # 세션에 저장
-                    st.session_state.analysis_result = result
+            def update_progress(step_name: str, progress: int):
+                """진행 상황 업데이트 콜백"""
+                progress_bar.progress(progress)
+                status_text.text(f"🤖 {step_name}... ({progress}%)")
 
-                    # 결과 표시
-                    display_result(result)
+            try:
+                # ✅ 허용: 기존 함수 호출 (진행률 콜백 포함)
+                result = asyncio.run(run_analysis(code, name, progress_callback=update_progress))
 
-                except Exception as e:
-                    st.error(f"❌ 분석 실패: {str(e)}")
-                    st.info("💡 다음을 확인해주세요:\n- API 키 설정 (.env 파일)\n- 인터넷 연결\n- 올바른 종목코드")
+                # 진행 완료
+                progress_bar.progress(100)
+                status_text.text("✅ 분석 완료!")
+
+                # 세션에 저장
+                st.session_state.analysis_result = result
+
+                # 진행 상황 표시 제거
+                progress_container.empty()
+
+                # 결과 표시
+                display_result(result)
+
+            except Exception as e:
+                progress_container.empty()
+                st.error(f"❌ 분석 실패: {str(e)}")
+                st.info("💡 다음을 확인해주세요:\n- API 키 설정 (.env 파일)\n- 인터넷 연결\n- 올바른 종목코드")
 
         else:
             st.error("❌ 올바른 종목코드 또는 종목명을 입력하세요.")
