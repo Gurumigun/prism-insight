@@ -29,6 +29,12 @@ from streamlit_apps.utils import (
     get_current_timestamp
 )
 
+# ✅ Trading Journal 모듈 import
+from streamlit_apps.db_manager import TradingJournalDB
+from streamlit_apps.technical_indicators import get_indicators_for_buy
+from streamlit_apps.config_manager import ConfigManager
+from datetime import datetime, date
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 1. 페이지 설정
@@ -88,6 +94,25 @@ def init_session_state():
         except Exception as e:
             st.session_state.qa_agent = None
             st.session_state.qa_error = str(e)
+
+    # Trading Journal DB 초기화
+    if 'trading_db' not in st.session_state:
+        try:
+            st.session_state.trading_db = TradingJournalDB()
+        except Exception as e:
+            st.session_state.trading_db = None
+            st.session_state.db_error = str(e)
+
+    # Config Manager 초기화
+    if 'config_manager' not in st.session_state:
+        try:
+            st.session_state.config_manager = ConfigManager()
+        except Exception as e:
+            st.session_state.config_manager = None
+
+    # Buy Journal Prefill Data (F-TJ-007)
+    if 'buy_journal_prefill' not in st.session_state:
+        st.session_state.buy_journal_prefill = None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -272,9 +297,16 @@ def display_result(result: dict):
         strategy_content = result.get('investment_strategy', '분석 결과가 없습니다.')
         st.markdown(strategy_content, unsafe_allow_html=True)
 
-    # PDF 다운로드
+    # PDF 다운로드 및 매수 일지 적용 (F-TJ-007)
     st.divider()
-    render_pdf_download(result)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        render_pdf_download(result)
+
+    with col2:
+        render_apply_to_buy_journal(result)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -332,7 +364,37 @@ def render_pdf_download(result: dict):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 6. Q&A 섹션
+# 6. 매수 일지 적용 (F-TJ-007)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def render_apply_to_buy_journal(result: dict):
+    """AI 분석 결과를 매수 일지에 바로 적용 (F-TJ-007)"""
+
+    if st.button("📝 매수 일지에 적용", use_container_width=True, type="secondary"):
+        # AI 의견 추출 (투자 전략 섹션)
+        ai_opinion = result.get('investment_strategy', '')
+
+        # Prefill 데이터 준비
+        prefill_data = {
+            'stock_code': result.get('company_code', ''),
+            'stock_name': result.get('company_name', ''),
+            'buy_date': datetime.now().strftime("%Y-%m-%d"),
+            'buy_quantity': 1,
+            'buy_price': 1000,
+            'buy_reason': '',
+            'potential': '',
+            'ai_buy_opinion': ai_opinion,  # AI 의견 자동 입력
+        }
+
+        # 세션에 저장
+        st.session_state.buy_journal_prefill = prefill_data
+
+        st.success("✅ 매수 일지에 AI 분석 결과가 적용되었습니다!")
+        st.info("📝 사이드바의 '매수일지' 탭으로 이동하세요.")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 7. Q&A 섹션
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def render_qa_section():
@@ -388,39 +450,446 @@ def render_qa_section():
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 7. 사이드바
+# 8. 매수 일지 (Buy Journal)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def render_buy_journal():
+    """매수 일지 UI 렌더링 (F-TJ-001)"""
+
+    st.subheader("📝 매수 일지")
+
+    # DB 상태 체크
+    if st.session_state.trading_db is None:
+        st.error("데이터베이스를 사용할 수 없습니다.")
+        if hasattr(st.session_state, 'db_error'):
+            st.error(st.session_state.db_error)
+        return
+
+    # Prefill 데이터 확인 (F-TJ-007: AI 분석에서 바로 적용)
+    prefill = st.session_state.buy_journal_prefill
+    if prefill:
+        st.info("🤖 AI 분석 결과가 적용되었습니다.")
+
+    # 1. 종목 정보
+    st.markdown("#### 📊 종목 정보")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        stock_code = st.text_input(
+            "종목 코드",
+            value=prefill.get('stock_code', '') if prefill else '',
+            placeholder="예: 005930",
+            help="6자리 종목 코드",
+            key="buy_stock_code"
+        )
+
+    with col2:
+        stock_name = st.text_input(
+            "종목명",
+            value=prefill.get('stock_name', '') if prefill else '',
+            placeholder="예: 삼성전자",
+            key="buy_stock_name"
+        )
+
+    # 2. 매수 정보
+    st.markdown("#### 💰 매수 정보")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        buy_date = st.date_input(
+            "매수일",
+            value=datetime.strptime(prefill.get('buy_date', datetime.now().strftime("%Y-%m-%d")), "%Y-%m-%d").date() if prefill else date.today(),
+            key="buy_date"
+        )
+
+    with col2:
+        buy_quantity = st.number_input(
+            "매수 수량",
+            min_value=1,
+            value=prefill.get('buy_quantity', 1) if prefill else 1,
+            step=1,
+            key="buy_quantity"
+        )
+
+    buy_price = st.number_input(
+        "매수 단가 (원)",
+        min_value=1,
+        value=prefill.get('buy_price', 1000) if prefill else 1000,
+        step=100,
+        key="buy_price",
+        help="주당 매수 가격"
+    )
+
+    # 매수 금액 자동 계산 표시
+    buy_amount = buy_price * buy_quantity
+    st.info(f"💵 매수 금액: {format_currency(buy_amount)}")
+
+    # 3. 매수 이유 및 기대
+    st.markdown("#### 📋 매수 판단")
+
+    buy_reason = st.text_area(
+        "매수 이유",
+        value=prefill.get('buy_reason', '') if prefill else '',
+        placeholder="매수 결정을 내린 근거를 작성하세요...",
+        height=100,
+        key="buy_reason"
+    )
+
+    potential = st.text_area(
+        "기대 (낙관적 기대감)",
+        value=prefill.get('potential', '') if prefill else '',
+        placeholder="이 종목에 대한 낙관적 기대를 작성하세요...",
+        height=80,
+        key="buy_potential"
+    )
+
+    # 4. AI 분석 의견 (선택사항)
+    st.markdown("#### 🤖 AI 분석 의견 (선택)")
+
+    with st.expander("AI 의견 보기/입력", expanded=bool(prefill)):
+        ai_buy_opinion = st.text_area(
+            "AI 매수 의견",
+            value=prefill.get('ai_buy_opinion', '') if prefill else '',
+            placeholder="AI 분석 요청 시 자동으로 채워집니다...",
+            height=150,
+            key="ai_buy_opinion",
+            help="'AI 분석 요청' 버튼을 클릭하면 자동으로 채워집니다."
+        )
+
+    # 5. 버튼
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    # AI 분석 요청 버튼 (선택사항)
+    with col1:
+        if st.button("🤖 AI 분석 요청", use_container_width=True, type="secondary"):
+            if not stock_code or not stock_name:
+                st.error("종목 코드와 종목명을 입력하세요.")
+            else:
+                # AI 분석 실행 후 의견 자동 입력
+                st.info("AI 분석 기능은 메인 분석 탭에서 실행 후 '매수 일지 적용' 버튼을 클릭하세요.")
+
+    # 저장 버튼
+    with col2:
+        if st.button("💾 매수 기록 저장", use_container_width=True, type="primary"):
+            # 입력 검증
+            if not stock_code or not stock_name:
+                st.error("종목 코드와 종목명을 입력하세요.")
+                return
+
+            if not buy_reason:
+                st.error("매수 이유를 입력하세요.")
+                return
+
+            # 매수 기록 데이터 준비
+            buy_record = {
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'buy_date': buy_date.strftime("%Y-%m-%d"),
+                'buy_quantity': buy_quantity,
+                'buy_price': buy_price,
+                'buy_reason': buy_reason,
+                'potential': potential,
+            }
+
+            # AI 의견 추가 (입력된 경우에만)
+            # PRD v1.2.0: AI 의견은 선택사항, 빈값이면 NULL
+            if ai_buy_opinion and ai_buy_opinion.strip():
+                buy_record['ai_buy_opinion'] = ai_buy_opinion
+            else:
+                buy_record['ai_buy_opinion'] = None
+
+            # 기술적 지표 자동 계산
+            with st.spinner("기술적 지표 계산 중..."):
+                try:
+                    indicators = get_indicators_for_buy(stock_code, buy_date.strftime("%Y%m%d"))
+                    buy_record.update(indicators)
+                except Exception as e:
+                    st.warning(f"기술적 지표 계산 실패: {e}")
+                    st.info("지표 없이 저장합니다.")
+
+            # DB에 저장
+            try:
+                record_id = st.session_state.trading_db.add_buy_record(buy_record)
+
+                if record_id:
+                    st.success(f"✅ 매수 기록이 저장되었습니다! (ID: {record_id})")
+
+                    # Prefill 데이터 초기화
+                    st.session_state.buy_journal_prefill = None
+
+                    # 입력 필드 초기화를 위해 rerun
+                    st.rerun()
+                else:
+                    st.error("매수 기록 저장에 실패했습니다.")
+
+            except Exception as e:
+                st.error(f"저장 중 오류 발생: {e}")
+
+    # Prefill 데이터 초기화 버튼
+    if prefill:
+        if st.button("🔄 입력 초기화", use_container_width=True):
+            st.session_state.buy_journal_prefill = None
+            st.rerun()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 9. 매도 일지 (Sell Journal)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def render_sell_journal():
+    """매도 일지 UI 렌더링 (F-TJ-002)"""
+
+    st.subheader("📤 매도 일지")
+
+    # DB 상태 체크
+    if st.session_state.trading_db is None:
+        st.error("데이터베이스를 사용할 수 없습니다.")
+        if hasattr(st.session_state, 'db_error'):
+            st.error(st.session_state.db_error)
+        return
+
+    # 1. 매수 기록 선택
+    st.markdown("#### 📋 매수 기록 선택")
+
+    # 미체결 매수 기록 조회 (sell_date가 NULL인 것들)
+    try:
+        open_positions = st.session_state.trading_db.get_open_positions()
+
+        if not open_positions:
+            st.info("매도 가능한 매수 기록이 없습니다.")
+            st.info("💡 먼저 '매수일지' 탭에서 매수 기록을 작성하세요.")
+            return
+
+        # 선택 옵션 생성
+        position_options = {}
+        for pos in open_positions:
+            label = f"[{pos['id']}] {pos['stock_name']}({pos['stock_code']}) - {pos['buy_date']} - {pos['buy_quantity']}주 @ {format_currency(pos['buy_price'])}"
+            position_options[label] = pos
+
+        selected_label = st.selectbox(
+            "매도할 매수 기록 선택",
+            options=list(position_options.keys()),
+            key="sell_position_select"
+        )
+
+        selected_position = position_options[selected_label]
+
+        # 선택된 매수 기록 정보 표시
+        st.info(f"""
+        **선택된 매수 기록**
+        - 종목: {selected_position['stock_name']} ({selected_position['stock_code']})
+        - 매수일: {selected_position['buy_date']}
+        - 매수 수량: {selected_position['buy_quantity']}주
+        - 매수 단가: {format_currency(selected_position['buy_price'])}
+        - 매수 금액: {format_currency(selected_position['buy_amount'])}
+        """)
+
+    except Exception as e:
+        st.error(f"매수 기록 조회 실패: {e}")
+        return
+
+    # 2. 매도 정보
+    st.markdown("#### 💰 매도 정보")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        sell_date = st.date_input(
+            "매도일",
+            value=date.today(),
+            min_value=datetime.strptime(selected_position['buy_date'], "%Y-%m-%d").date(),
+            key="sell_date"
+        )
+
+    with col2:
+        sell_quantity = st.number_input(
+            "매도 수량",
+            min_value=1,
+            max_value=selected_position['buy_quantity'],
+            value=selected_position['buy_quantity'],
+            step=1,
+            key="sell_quantity",
+            help=f"최대 {selected_position['buy_quantity']}주"
+        )
+
+    sell_price = st.number_input(
+        "매도 단가 (원)",
+        min_value=1,
+        value=selected_position['buy_price'],
+        step=100,
+        key="sell_price",
+        help="주당 매도 가격"
+    )
+
+    # 매도 금액 및 손익 자동 계산 표시
+    sell_amount = sell_price * sell_quantity
+    profit_amount = (sell_price - selected_position['buy_price']) * sell_quantity
+    profit_rate = ((sell_price - selected_position['buy_price']) / selected_position['buy_price']) * 100
+    holding_days = (sell_date - datetime.strptime(selected_position['buy_date'], "%Y-%m-%d").date()).days
+
+    # 손익 표시 (색상 구분)
+    if profit_amount > 0:
+        st.success(f"""
+        💵 매도 금액: {format_currency(sell_amount)}
+        📈 손익: +{format_currency(profit_amount)} ({format_percentage(profit_rate)})
+        📅 보유 기간: {holding_days}일
+        """)
+    elif profit_amount < 0:
+        st.error(f"""
+        💵 매도 금액: {format_currency(sell_amount)}
+        📉 손익: {format_currency(profit_amount)} ({format_percentage(profit_rate)})
+        📅 보유 기간: {holding_days}일
+        """)
+    else:
+        st.info(f"""
+        💵 매도 금액: {format_currency(sell_amount)}
+        ➖ 손익: {format_currency(profit_amount)} ({format_percentage(profit_rate)})
+        📅 보유 기간: {holding_days}일
+        """)
+
+    # 3. 매도 이유 및 교훈
+    st.markdown("#### 📋 매도 판단")
+
+    sell_reason = st.text_area(
+        "매도 이유",
+        placeholder="매도 결정을 내린 근거를 작성하세요...",
+        height=100,
+        key="sell_reason"
+    )
+
+    lesson_learned = st.text_area(
+        "배운 점 (교훈)",
+        placeholder="이번 매매에서 배운 점을 작성하세요...",
+        height=80,
+        key="lesson_learned"
+    )
+
+    # 4. AI 분석 의견 (선택사항)
+    st.markdown("#### 🤖 AI 분석 의견 (선택)")
+
+    with st.expander("AI 의견 보기/입력"):
+        ai_sell_opinion = st.text_area(
+            "AI 매도 의견",
+            placeholder="AI 분석 요청 시 자동으로 채워집니다...",
+            height=150,
+            key="ai_sell_opinion",
+            help="'AI 분석 요청' 버튼을 클릭하면 자동으로 채워집니다."
+        )
+
+    # 5. 버튼
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    # AI 분석 요청 버튼 (선택사항)
+    with col1:
+        if st.button("🤖 AI 분석 요청", use_container_width=True, type="secondary", key="sell_ai_btn"):
+            st.info("AI 분석 기능은 메인 분석 탭에서 실행 후 '매도 일지 적용' 버튼을 클릭하세요.")
+
+    # 저장 버튼
+    with col2:
+        if st.button("💾 매도 기록 저장", use_container_width=True, type="primary", key="sell_save_btn"):
+            # 입력 검증
+            if not sell_reason:
+                st.error("매도 이유를 입력하세요.")
+                return
+
+            # 매도 기록 데이터 준비
+            sell_record = {
+                'sell_date': sell_date.strftime("%Y-%m-%d"),
+                'sell_quantity': sell_quantity,
+                'sell_price': sell_price,
+                'sell_reason': sell_reason,
+                'lesson_learned': lesson_learned,
+            }
+
+            # AI 의견 추가 (입력된 경우에만)
+            # PRD v1.2.0: AI 의견은 선택사항, 빈값이면 NULL
+            if ai_sell_opinion and ai_sell_opinion.strip():
+                sell_record['ai_sell_opinion'] = ai_sell_opinion
+            else:
+                sell_record['ai_sell_opinion'] = None
+
+            # 기술적 지표 자동 계산
+            with st.spinner("기술적 지표 계산 중..."):
+                try:
+                    from streamlit_apps.technical_indicators import get_indicators_for_sell
+                    indicators = get_indicators_for_sell(
+                        selected_position['stock_code'],
+                        sell_date.strftime("%Y%m%d")
+                    )
+                    sell_record.update(indicators)
+                except Exception as e:
+                    st.warning(f"기술적 지표 계산 실패: {e}")
+                    st.info("지표 없이 저장합니다.")
+
+            # DB에 매도 정보 업데이트
+            try:
+                success = st.session_state.trading_db.update_sell_record(
+                    selected_position['id'],
+                    sell_record
+                )
+
+                if success:
+                    st.success(f"✅ 매도 기록이 저장되었습니다! (ID: {selected_position['id']})")
+                    st.balloons()
+
+                    # 페이지 새로고침
+                    st.rerun()
+                else:
+                    st.error("매도 기록 저장에 실패했습니다.")
+
+            except Exception as e:
+                st.error(f"저장 중 오류 발생: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 10. 사이드바
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def render_sidebar():
     """사이드바 렌더링"""
 
     with st.sidebar:
-        st.title("📊 주식 분석")
+        st.title("📊 PRISM-INSIGHT")
 
-        # 종목 입력
-        stock_input = st.text_input(
-            "종목코드 또는 종목명",
-            placeholder="예: 005930 또는 삼성전자",
-            help="6자리 종목코드 또는 종목명을 입력하세요"
-        )
+        # 탭으로 기능 분리
+        tab1, tab2, tab3 = st.tabs(["🔍 분석", "📝 매수일지", "📤 매도일지"])
 
-        # 분석 버튼
-        analyze_btn = st.button(
-            "🔍 분석 시작",
-            type="primary",
-            use_container_width=True
-        )
+        with tab1:
+            # 종목 입력
+            stock_input = st.text_input(
+                "종목코드 또는 종목명",
+                placeholder="예: 005930 또는 삼성전자",
+                help="6자리 종목코드 또는 종목명을 입력하세요"
+            )
 
-        st.divider()
+            # 분석 버튼
+            analyze_btn = st.button(
+                "🔍 분석 시작",
+                type="primary",
+                use_container_width=True
+            )
 
-        # Q&A 섹션
-        render_qa_section()
+            st.divider()
+
+            # Q&A 섹션
+            render_qa_section()
+
+        with tab2:
+            # 매수 일지 (F-TJ-001)
+            render_buy_journal()
+
+        with tab3:
+            # 매도 일지 (F-TJ-002)
+            render_sell_journal()
 
         return stock_input, analyze_btn
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 8. 메인 함수
+# 11. 메인 함수
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def main():
