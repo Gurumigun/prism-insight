@@ -20,3 +20,10 @@ trading/config/kis_*.yaml
 examples/dashboard/build/
 examples/dashboard/dist/
 examples/dashboard/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
