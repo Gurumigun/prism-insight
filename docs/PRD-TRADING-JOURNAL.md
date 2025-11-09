@@ -3,11 +3,17 @@
 ## 문서 정보
 - **작성일**: 2025-11-09
 - **최종 수정일**: 2025-11-09
-- **버전**: 1.1.0
+- **버전**: 1.2.0
 - **담당**: PRISM-INSIGHT Streamlit 개발팀
 - **상태**: 승인됨
 
 ### 변경 이력
+- **v1.2.0** (2025-11-09):
+  - **AI 의견 선택사항 명시**: AI 분석 요청 버튼을 클릭한 경우에만 AI 의견 저장
+  - **직접 입력 시 빈값**: 사용자가 직접 매수/매도 일지를 작성하는 경우 AI 의견은 NULL
+  - F-TJ-001, F-TJ-002: AI 분석 연동이 선택사항임을 명확히 표시
+  - F-TJ-007: AI 분석 완료 후에만 사용 가능함을 강조
+  - UI 예시 업데이트: AI 의견 추가 섹션 분리 및 선택사항 표시
 - **v1.1.0** (2025-11-09):
   - F-TJ-006 추가: 매매 기록 수정 기능 (자동 재계산 포함)
   - F-TJ-007 추가: AI 분석 결과 바로 적용 기능 (원클릭 일지 작성)
@@ -174,14 +180,20 @@ CREATE TABLE IF NOT EXISTS monthly_stats (
      - 이동평균선 (20일, 60일, 90일, 120일)
      - 거래량, 평균 거래량
 
-3. **AI 분석 연동**:
-   - "AI 분석 요청" 버튼 클릭 시
-   - 기존 `cores/analysis.py` 호출하여 분석 보고서 생성
-   - 투자 전략 섹션에서 매수 의견 추출하여 저장
-   - 분석 요약본 저장
+3. **AI 분석 연동 (선택사항)**:
+   - **"🤖 AI 분석 요청" 버튼 클릭 시에만**:
+     - 기존 `cores/analysis.py` 호출하여 분석 보고서 생성
+     - 투자 전략 섹션에서 매수 의견 추출하여 저장
+     - 분석 요약본 저장
+   - **버튼을 클릭하지 않은 경우**:
+     - `ai_buy_opinion`: NULL (빈값)
+     - `ai_report_summary`: NULL (빈값)
+   - **사용자가 직접 입력한 경우** (F-TJ-007 미사용):
+     - AI 의견 없이 매수 기록만 저장
 
 4. **저장 처리**:
-   - 입력값 검증 (필수 항목 확인)
+   - 입력값 검증 (필수 항목: 종목코드, 수량, 가격, 날짜)
+   - AI 의견은 선택사항 (없어도 저장 가능)
    - 중복 체크 (동일 종목/날짜 경고)
    - DB에 INSERT
    - 성공 메시지 표시
@@ -219,11 +231,18 @@ CREATE TABLE IF NOT EXISTS monthly_stats (
    - 수익률 = (매도가 - 매수가) / 매수가 × 100
    - 보유 일수 = 매도일 - 매수일
 
-5. **AI 분석 연동**:
-   - "AI 매도 의견 요청" 버튼
-   - 현재 시점 분석 후 매도 의견 추출
+5. **AI 분석 연동 (선택사항)**:
+   - **"🤖 AI 매도 의견 요청" 버튼 클릭 시에만**:
+     - 현재 시점 분석 (cores/analysis.py 호출)
+     - 투자 전략 섹션에서 매도 의견 추출하여 저장
+   - **버튼을 클릭하지 않은 경우**:
+     - `ai_sell_opinion`: NULL (빈값)
+   - **사용자가 직접 입력한 경우** (F-TJ-007 미사용):
+     - AI 의견 없이 매도 기록만 저장
 
 6. **저장 처리**:
+   - 입력값 검증 (필수 항목: 매도 수량, 가격, 날짜)
+   - AI 의견은 선택사항 (없어도 저장 가능)
    - 기존 레코드 UPDATE (매도 정보 추가)
    - 월별 통계 캐시 업데이트
 
@@ -537,6 +556,11 @@ with st.expander(f"📝 {row['stock_name']} 상세 정보"):
 - AI 분석 결과(투자 의견)를 수동으로 복사/붙여넣기 하는 번거로움
 - 분석 직후 매매 기록을 남기고 싶을 때 빠른 작성 필요
 
+**중요**:
+- ⚠️ **이 기능은 AI 분석 완료 후에만 사용 가능**
+- ⚠️ **AI 의견은 이 기능을 통해서만 자동 입력됨**
+- ⚠️ **일반적으로 직접 입력하는 경우 AI 의견 필드는 NULL (빈값)**
+
 **기능 상세**:
 
 1. **트리거 위치**:
@@ -827,22 +851,33 @@ st.sidebar.header("📝 매수 일지")
 # 종목 입력
 stock_input = st.sidebar.text_input("종목코드/종목명", placeholder="005930 또는 삼성전자")
 
-# 매수 정보
+# 매수 정보 (필수)
 buy_quantity = st.sidebar.number_input("매수 수량", min_value=1, step=1)
 buy_price = st.sidebar.number_input("매수 단가 (원)", min_value=1, step=100)
 buy_date = st.sidebar.date_input("매수일", value=datetime.now())
 
-# AI 분석 요청
+# AI 분석 요청 (선택사항)
+st.sidebar.markdown("---")
+st.sidebar.caption("🤖 AI 의견 추가 (선택사항)")
+
 if st.sidebar.button("🤖 AI 분석 요청"):
     # 분석 실행 및 의견 저장
+    # ai_buy_opinion, ai_report_summary 필드에 값 입력
     pass
 
-# 메모
+# AI 의견이 있는 경우 표시
+if 'ai_opinion' in st.session_state:
+    st.sidebar.info(f"AI 의견: {st.session_state['ai_opinion'][:100]}...")
+
+st.sidebar.markdown("---")
+
+# 메모 (선택사항)
 notes = st.sidebar.text_area("메모 (선택사항)")
 
 # 저장 버튼
 if st.sidebar.button("💾 매수 기록 저장", type="primary"):
     # 저장 로직
+    # AI 의견이 없어도 저장 가능 (ai_buy_opinion=NULL)
     pass
 ```
 
@@ -860,7 +895,7 @@ selected_holding = st.sidebar.selectbox(
     format_func=lambda x: f"{x['stock_name']} ({x['quantity']}주)"
 )
 
-# 매도 정보
+# 매도 정보 (필수)
 sell_quantity = st.sidebar.number_input("매도 수량", min_value=1, max_value=selected_holding['quantity'])
 sell_price = st.sidebar.number_input("매도 단가 (원)", min_value=1, step=100)
 sell_date = st.sidebar.date_input("매도일", value=datetime.now())
@@ -869,9 +904,25 @@ sell_date = st.sidebar.date_input("매도일", value=datetime.now())
 expected_profit = calculate_profit(selected_holding, sell_quantity, sell_price)
 st.sidebar.metric("예상 손익", f"{expected_profit:,}원")
 
+# AI 매도 의견 요청 (선택사항)
+st.sidebar.markdown("---")
+st.sidebar.caption("🤖 AI 매도 의견 추가 (선택사항)")
+
+if st.sidebar.button("🤖 AI 매도 의견 요청"):
+    # 분석 실행 및 매도 의견 저장
+    # ai_sell_opinion 필드에 값 입력
+    pass
+
+# AI 의견이 있는 경우 표시
+if 'ai_sell_opinion' in st.session_state:
+    st.sidebar.info(f"AI 매도 의견: {st.session_state['ai_sell_opinion'][:100]}...")
+
+st.sidebar.markdown("---")
+
 # 저장 버튼
 if st.sidebar.button("💰 매도 기록 저장", type="primary"):
     # 저장 로직
+    # AI 의견이 없어도 저장 가능 (ai_sell_opinion=NULL)
     pass
 ```
 
