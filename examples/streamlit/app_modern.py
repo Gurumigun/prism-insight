@@ -6,16 +6,27 @@ import markdown
 import base64
 import sys
 import os
+import pandas as pd
+import json
 
 # 현재 파일의 디렉토리를 Python path에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 from email_sender import send_email
 from queue import Queue
 from threading import Thread
 import uuid
+
+# TradingJournalDB import
+try:
+    from trading_journal_db import TradingJournalDB
+except ImportError:
+    TradingJournalDB = None
 
 # 보고서 저장 디렉토리 설정
 REPORTS_DIR = Path(__file__).parent.parent.parent / "reports"
@@ -933,6 +944,202 @@ asyncio.run(run())
         filename = f"{file_path.stem}.{extension}"
         return f'<a href="data:file/{extension};base64,{b64}" download="{filename}">💾 {extension.upper()} 형식으로 다운로드</a>'
 
+    def render_buy_records(self):
+        """매수 기록 화면"""
+        self.add_app_header()
+
+        st.markdown("## 📊 매수 기록")
+        st.markdown("현재 보유 중인 종목의 매수 기록을 확인할 수 있습니다.")
+
+        if TradingJournalDB is None:
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다. trading_journal_db.py 파일이 존재하는지 확인해주세요.")
+            return
+
+        try:
+            with TradingJournalDB() as db:
+                positions = db.get_open_positions()
+
+                if not positions:
+                    st.info("📭 현재 보유 중인 종목이 없습니다.")
+                    return
+
+                # 통계 정보 표시
+                stats = db.get_statistics()
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("보유 종목 수", f"{len(positions)}개")
+                with col2:
+                    avg_profit = sum(p['profit_rate'] for p in positions) / len(positions) if positions else 0
+                    st.metric("평균 수익률", f"{avg_profit:+.2f}%")
+                with col3:
+                    profitable = sum(1 for p in positions if p['profit_rate'] > 0)
+                    st.metric("수익 종목", f"{profitable}개")
+                with col4:
+                    losing = sum(1 for p in positions if p['profit_rate'] < 0)
+                    st.metric("손실 종목", f"{losing}개")
+
+                st.markdown("---")
+
+                # 보유 종목 목록 표시
+                st.markdown("### 💼 보유 종목 목록")
+
+                for idx, pos in enumerate(positions, 1):
+                    # 수익률에 따른 색상 및 이모지 결정
+                    profit_rate = pos['profit_rate']
+                    if profit_rate > 0:
+                        color = "green"
+                        emoji = "🔺"
+                    elif profit_rate < 0:
+                        color = "red"
+                        emoji = "🔻"
+                    else:
+                        color = "gray"
+                        emoji = "➖"
+
+                    with st.expander(f"{emoji} {pos['company_name']} ({pos['ticker']}) - 수익률: {profit_rate:+.2f}%", expanded=(idx <= 3)):
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.markdown(f"**매수가:** {pos['buy_price']:,.0f}원")
+                            st.markdown(f"**현재가:** {pos['current_price']:,.0f}원")
+                            st.markdown(f"**목표가:** {pos.get('target_price', 0):,.0f}원")
+
+                        with col2:
+                            st.markdown(f"**손절가:** {pos.get('stop_loss', 0):,.0f}원")
+                            st.markdown(f"**매수일:** {pos['buy_date']}")
+                            st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+
+                        # 시나리오 정보가 있으면 표시
+                        if pos.get('scenario'):
+                            try:
+                                scenario = json.loads(pos['scenario']) if isinstance(pos['scenario'], str) else pos['scenario']
+                                st.markdown("**투자 근거:**")
+                                st.markdown(f"- {scenario.get('rationale', '정보 없음')}")
+                                st.markdown(f"**투자 기간:** {scenario.get('investment_period', '중기')}")
+                                st.markdown(f"**산업군:** {scenario.get('sector', '알 수 없음')}")
+                            except:
+                                pass
+
+                # 데이터프레임으로도 표시
+                st.markdown("### 📋 요약 테이블")
+                df_data = []
+                for pos in positions:
+                    df_data.append({
+                        '종목명': pos['company_name'],
+                        '종목코드': pos['ticker'],
+                        '매수가': f"{pos['buy_price']:,.0f}원",
+                        '현재가': f"{pos['current_price']:,.0f}원",
+                        '수익률': f"{pos['profit_rate']:+.2f}%",
+                        '매수일': pos['buy_date'].split()[0]  # 날짜만 표시
+                    })
+
+                df = pd.DataFrame(df_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            st.error(f"매수 기록 조회 중 오류가 발생했습니다: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
+    def render_sell_records(self):
+        """매도 기록 화면"""
+        self.add_app_header()
+
+        st.markdown("## 📉 매도 기록")
+        st.markdown("과거 매도한 종목의 거래 내역을 확인할 수 있습니다.")
+
+        if TradingJournalDB is None:
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다. trading_journal_db.py 파일이 존재하는지 확인해주세요.")
+            return
+
+        try:
+            with TradingJournalDB() as db:
+                # 조회 건수 선택
+                limit_options = [10, 20, 50, 100]
+                limit = st.selectbox("조회 건수", limit_options, index=0)
+
+                history = db.get_trading_history(limit=limit)
+
+                if not history:
+                    st.info("📭 매도 기록이 없습니다.")
+                    return
+
+                # 통계 정보
+                stats = db.get_statistics()
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("총 거래", f"{stats.get('total_trades', 0)}건")
+                with col2:
+                    st.metric("수익 거래", f"{stats.get('profitable_trades', 0)}건",
+                             delta=f"{stats.get('win_rate', 0):.1f}% 승률")
+                with col3:
+                    st.metric("손실 거래", f"{stats.get('losing_trades', 0)}건")
+                with col4:
+                    st.metric("평균 수익률", f"{stats.get('avg_profit_rate', 0):+.2f}%")
+
+                st.markdown("---")
+
+                # 매도 내역 목록
+                st.markdown("### 💰 매도 내역")
+
+                for idx, trade in enumerate(history, 1):
+                    profit_rate = trade['profit_rate']
+                    if profit_rate > 0:
+                        color = "green"
+                        emoji = "✅"
+                        result = "수익"
+                    else:
+                        color = "red"
+                        emoji = "❌"
+                        result = "손실"
+
+                    with st.expander(f"{emoji} {trade['company_name']} ({trade['ticker']}) - {result}: {profit_rate:+.2f}%", expanded=(idx <= 5)):
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.markdown(f"**매수가:** {trade['buy_price']:,.0f}원")
+                            st.markdown(f"**매도가:** {trade['sell_price']:,.0f}원")
+                            st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+
+                        with col2:
+                            st.markdown(f"**매수일:** {trade['buy_date']}")
+                            st.markdown(f"**매도일:** {trade['sell_date']}")
+                            st.markdown(f"**보유기간:** {trade['holding_days']}일")
+
+                        # 시나리오 정보
+                        if trade.get('scenario'):
+                            try:
+                                scenario = json.loads(trade['scenario']) if isinstance(trade['scenario'], str) else trade['scenario']
+                                st.markdown("**투자 정보:**")
+                                st.markdown(f"- 투자 기간: {scenario.get('investment_period', '중기')}")
+                                st.markdown(f"- 산업군: {scenario.get('sector', '알 수 없음')}")
+                            except:
+                                pass
+
+                # 데이터프레임으로도 표시
+                st.markdown("### 📋 거래 내역 테이블")
+                df_data = []
+                for trade in history:
+                    df_data.append({
+                        '종목명': trade['company_name'],
+                        '종목코드': trade['ticker'],
+                        '매수가': f"{trade['buy_price']:,.0f}원",
+                        '매도가': f"{trade['sell_price']:,.0f}원",
+                        '수익률': f"{trade['profit_rate']:+.2f}%",
+                        '보유기간': f"{trade['holding_days']}일",
+                        '매도일': trade['sell_date'].split()[0]
+                    })
+
+                df = pd.DataFrame(df_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            st.error(f"매도 기록 조회 중 오류가 발생했습니다: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
     def main(self):
         """메인 애플리케이션 실행"""
         # 사이드바 디자인 개선
@@ -942,32 +1149,38 @@ asyncio.run(run())
             <div class="sidebar-title">analysis.stocksimulation.kr</div>
         </div>
         """, unsafe_allow_html=True)
-        
+
         st.sidebar.title("메뉴")
-        
+
         # 모던한 사이드바 메뉴
         menu_options = {
             "분석 요청": "📝",
-            "보고서 보기": "📚"
+            "보고서 보기": "📚",
+            "매수 기록": "💰",
+            "매도 기록": "📉"
         }
-        
+
         menu = st.sidebar.radio(
             "선택",
             list(menu_options.keys()),
             format_func=lambda x: f"{menu_options[x]} {x}"
         )
-        
+
         # 앱 버전 및 소셜 링크
         st.sidebar.markdown("---")
         st.sidebar.markdown("#### 서비스 정보")
-        st.sidebar.markdown("버전: v1.0.2")
+        st.sidebar.markdown("버전: v1.0.3")
         st.sidebar.markdown("© 2025 https://analysis.stocksimulation.kr")
-        
+
         # 메인 콘텐츠 렌더링
         if menu == "분석 요청":
             self.render_modern_analysis_form()
-        else:
+        elif menu == "보고서 보기":
             self.render_modern_report_viewer()
+        elif menu == "매수 기록":
+            self.render_buy_records()
+        elif menu == "매도 기록":
+            self.render_sell_records()
 
 if __name__ == "__main__":
     app = ModernStockAnalysisApp()
