@@ -2,9 +2,16 @@
 
 ## 문서 정보
 - **작성일**: 2025-11-09
-- **버전**: 1.0.0
+- **최종 수정일**: 2025-11-09
+- **버전**: 1.1.0
 - **담당**: PRISM-INSIGHT Streamlit 개발팀
-- **상태**: 초안
+- **상태**: 승인됨
+
+### 변경 이력
+- **v1.1.0** (2025-11-09):
+  - F-TJ-006 추가: 매매 기록 수정 기능 (자동 재계산 포함)
+  - F-TJ-007 추가: AI 분석 결과 바로 적용 기능 (원클릭 일지 작성)
+- **v1.0.0** (2025-11-09): 초안 작성
 
 ---
 
@@ -356,6 +363,440 @@ CREATE TABLE IF NOT EXISTS monthly_stats (
 
 ---
 
+### 3.6 매매 기록 수정 기능 (F-TJ-006)
+
+#### 3.6.1 기록 수정
+**우선순위**: P0 (필수)
+
+**사용자 스토리**:
+> 사용자로서, 매수/매도 시 입력한 금액이나 수량이 실제와 다를 경우 이를 수정하여 정확한 손익을 추적하고 싶다.
+
+**배경**:
+- 실제 매매 시 체결가가 예상과 다를 수 있음 (시장가 주문, 부분 체결 등)
+- 수수료, 세금을 포함한 실제 체결 금액이 다를 수 있음
+- 분할 매수/매도로 평균 단가가 변경될 수 있음
+- 입력 실수를 수정해야 할 필요
+
+**기능 상세**:
+
+1. **수정 가능 필드**:
+   - ✅ 매수 수량 (buy_quantity)
+   - ✅ 매수 단가 (buy_price)
+   - ✅ 매수 일시 (buy_date)
+   - ✅ 매도 수량 (sell_quantity)
+   - ✅ 매도 단가 (sell_price)
+   - ✅ 매도 일시 (sell_date)
+   - ✅ 사용자 메모 (notes)
+   - ❌ 기술적 지표 (자동 재계산됨)
+   - ❌ AI 의견 (재요청 필요)
+
+2. **수정 UI 접근**:
+   - **방법 1**: 매매 내역 탭에서 행 클릭 → "✏️ 수정" 버튼
+   - **방법 2**: 보유 중 종목 상세 보기 → "✏️ 수정" 버튼
+
+3. **수정 프로세스**:
+   ```
+   사용자가 수정 버튼 클릭
+      ↓
+   팝업 또는 확장 영역에 현재 데이터 표시
+      ↓
+   사용자가 값 변경 (수량, 가격, 날짜 등)
+      ↓
+   "💾 저장" 버튼 클릭
+      ↓
+   [자동 처리]
+   1. 매수/매도 총액 재계산 (가격 × 수량)
+   2. 손익금/수익률 재계산
+   3. 보유 일수 재계산
+   4. 날짜 변경 시 기술적 지표 재계산
+   5. 월별 통계 캐시 무효화 및 재계산
+      ↓
+   DB UPDATE
+      ↓
+   성공 메시지 + 변경 사항 요약 표시
+   ```
+
+4. **자동 재계산 로직**:
+   ```python
+   def update_record(record_id: int, updated_data: dict):
+       """매매 기록 수정 및 자동 재계산"""
+
+       # 1. 기본 값 재계산
+       if 'buy_price' in updated_data or 'buy_quantity' in updated_data:
+           updated_data['buy_amount'] = updated_data.get('buy_price', old_buy_price) * \
+                                        updated_data.get('buy_quantity', old_buy_quantity)
+
+       if 'sell_price' in updated_data or 'sell_quantity' in updated_data:
+           updated_data['sell_amount'] = updated_data.get('sell_price', old_sell_price) * \
+                                        updated_data.get('sell_quantity', old_sell_quantity)
+
+       # 2. 손익 재계산
+       if 'buy_price' in updated_data or 'sell_price' in updated_data or \
+          'buy_quantity' in updated_data or 'sell_quantity' in updated_data:
+           buy_price = updated_data.get('buy_price', old_buy_price)
+           sell_price = updated_data.get('sell_price', old_sell_price)
+           quantity = updated_data.get('sell_quantity', old_sell_quantity)
+
+           updated_data['profit_amount'] = (sell_price - buy_price) * quantity
+           updated_data['profit_rate'] = ((sell_price - buy_price) / buy_price) * 100
+
+       # 3. 보유 일수 재계산
+       if 'buy_date' in updated_data or 'sell_date' in updated_data:
+           buy_date = updated_data.get('buy_date', old_buy_date)
+           sell_date = updated_data.get('sell_date', old_sell_date)
+           updated_data['holding_days'] = (sell_date - buy_date).days
+
+       # 4. 날짜 변경 시 기술적 지표 재계산
+       if 'buy_date' in updated_data:
+           indicators = calculate_technical_indicators(stock_code, updated_data['buy_date'])
+           updated_data.update({f'buy_{k}': v for k, v in indicators.items()})
+
+       if 'sell_date' in updated_data:
+           indicators = calculate_technical_indicators(stock_code, updated_data['sell_date'])
+           updated_data.update({f'sell_{k}': v for k, v in indicators.items()})
+
+       # 5. DB 업데이트
+       db.update_record(record_id, updated_data)
+
+       # 6. 통계 캐시 무효화
+       invalidate_monthly_stats_cache()
+   ```
+
+5. **수정 이력 추적** (선택사항):
+   - 수정 전/후 값 로깅
+   - `updated_at` 타임스탬프 자동 갱신
+   - 변경 사항 요약 표시:
+     ```
+     ✅ 매매 기록이 수정되었습니다.
+
+     변경 사항:
+     • 매수 단가: 72,000원 → 72,500원 (+500원)
+     • 매수 수량: 10주 → 8주 (-2주)
+     • 매수 총액: 720,000원 → 580,000원
+     • 수익금: +50,000원 → +40,000원 (재계산됨)
+     • 수익률: +6.9% → +6.9% (재계산됨)
+     ```
+
+6. **검증 규칙**:
+   - 매도 수량 ≤ 매수 수량
+   - 매도일 ≥ 매수일
+   - 가격 > 0, 수량 > 0
+   - 날짜는 미래일 수 없음
+
+**UI 예시**:
+```python
+# 매매 내역 상세 보기
+with st.expander(f"📝 {row['stock_name']} 상세 정보"):
+    if st.button("✏️ 수정", key=f"edit_{row['id']}"):
+        st.session_state['editing_record'] = row['id']
+
+    if st.session_state.get('editing_record') == row['id']:
+        # 수정 폼
+        with st.form(f"edit_form_{row['id']}"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                new_buy_quantity = st.number_input("매수 수량", value=row['buy_quantity'])
+                new_buy_price = st.number_input("매수 단가", value=row['buy_price'])
+                new_buy_date = st.date_input("매수일", value=row['buy_date'])
+
+            with col2:
+                new_sell_quantity = st.number_input("매도 수량", value=row['sell_quantity'])
+                new_sell_price = st.number_input("매도 단가", value=row['sell_price'])
+                new_sell_date = st.date_input("매도일", value=row['sell_date'])
+
+            new_notes = st.text_area("메모", value=row['notes'])
+
+            submitted = st.form_submit_button("💾 저장")
+            if submitted:
+                update_record(row['id'], {
+                    'buy_quantity': new_buy_quantity,
+                    'buy_price': new_buy_price,
+                    # ...
+                })
+                st.success("✅ 수정되었습니다!")
+```
+
+**데이터 무결성 보장**:
+- 트랜잭션 사용 (SQLite BEGIN/COMMIT)
+- 수정 전 백업 (롤백 가능)
+- Cascade 업데이트 (관련 통계 자동 갱신)
+
+---
+
+### 3.7 AI 분석 결과 바로 적용 기능 (F-TJ-007)
+
+#### 3.7.1 원클릭 매매 일지 작성
+**우선순위**: P0 (필수)
+
+**사용자 스토리**:
+> 사용자로서, AI 주식 분석을 실행한 후 그 결과를 기반으로 매수/매도 일지에 바로 반영하여 중복 입력을 줄이고 싶다.
+
+**배경**:
+- 사용자가 AI 분석 탭에서 종목 분석 후, 매수/매도 일지에 동일 정보를 다시 입력해야 하는 불편함
+- AI 분석 결과(투자 의견)를 수동으로 복사/붙여넣기 하는 번거로움
+- 분석 직후 매매 기록을 남기고 싶을 때 빠른 작성 필요
+
+**기능 상세**:
+
+1. **트리거 위치**:
+   - AI 주식 분석 탭에서 분석 완료 후
+   - 분석 결과 하단에 버튼 표시:
+     ```
+     ┌──────────────────────────────────────┐
+     │  AI 분석 완료!                        │
+     ├──────────────────────────────────────┤
+     │  [📝 매수 일지에 추가]  [📊 매도 일지에 추가]  │
+     └──────────────────────────────────────┘
+     ```
+
+2. **매수 일지에 추가 프로세스**:
+   ```
+   사용자가 "📝 매수 일지에 추가" 버튼 클릭
+      ↓
+   사이드바 "매수 일지" 탭으로 자동 전환
+      ↓
+   분석한 종목 정보 자동 입력:
+   - 종목코드: AI 분석한 종목 (예: 005930)
+   - 종목명: 삼성전자
+   - AI 의견: 투자 전략 섹션 자동 추출
+   - 분석 요약: 핵심 투자 포인트 자동 추출
+      ↓
+   사용자가 추가 정보 입력:
+   - 매수 수량
+   - 매수 단가
+   - 매수일
+      ↓
+   "💾 저장" 버튼 클릭 → DB 저장
+   ```
+
+3. **자동 입력 필드**:
+   | 필드 | 자동 입력 내용 | 출처 |
+   |------|--------------|------|
+   | stock_code | 종목코드 | AI 분석 입력값 |
+   | stock_name | 종목명 | AI 분석 입력값 |
+   | ai_buy_opinion | 매수 의견 | 투자 전략 섹션 파싱 |
+   | ai_report_summary | 분석 요약 | 핵심 투자 포인트 섹션 |
+   | buy_current_price | 현재가 | 분석 시점 종가 |
+   | buy_close_price | 종가 | pykrx 조회 |
+
+4. **AI 의견 추출 로직**:
+   ```python
+   def extract_buy_opinion(analysis_result: str) -> str:
+       """투자 전략 섹션에서 매수 의견 추출"""
+
+       # 투자 전략 섹션 찾기
+       strategy_section = extract_section(analysis_result, '투자 전략 및 의견')
+
+       # 매수 관련 키워드 추출
+       buy_keywords = [
+           '매수', '진입', '비중 확대', '매수 고려',
+           '매수 포인트', '목표가', '상승 여력'
+       ]
+
+       # 매수 관련 문장 추출
+       buy_sentences = []
+       for line in strategy_section.split('\n'):
+           if any(keyword in line for keyword in buy_keywords):
+               buy_sentences.append(line.strip())
+
+       # 최대 3개 문장으로 제한
+       return '\n'.join(buy_sentences[:3])
+
+   def extract_summary(analysis_result: str) -> str:
+       """핵심 투자 포인트 섹션 추출"""
+       return extract_section(analysis_result, '핵심 투자 포인트')
+   ```
+
+5. **매도 일지에 추가 프로세스**:
+   ```
+   사용자가 "📊 매도 일지에 추가" 버튼 클릭
+      ↓
+   보유 중인 해당 종목 자동 검색
+      ↓
+   [Case 1] 보유 중인 기록이 있는 경우:
+      → 사이드바 "매도 일지" 탭으로 전환
+      → 해당 종목 자동 선택
+      → AI 매도 의견 자동 입력
+      → 현재가로 매도 단가 자동 입력
+      → 사용자가 매도 수량, 일시 입력 후 저장
+
+   [Case 2] 보유 중인 기록이 없는 경우:
+      → 경고 메시지 표시:
+        "⚠️ 현재 보유 중인 {종목명} 기록이 없습니다.
+         먼저 매수 일지에 기록을 추가해주세요."
+      → "매수 일지에 추가하기" 버튼 제공
+   ```
+
+6. **UI 구현 예시**:
+   ```python
+   # AI 분석 탭 (personal_analyzer.py)
+   if 'last_analysis_result' in st.session_state:
+       result = st.session_state['last_analysis_result']
+
+       st.markdown("---")
+       st.subheader("📝 매매 일지 바로 작성")
+
+       col1, col2 = st.columns(2)
+
+       with col1:
+           if st.button("📝 매수 일지에 추가", use_container_width=True):
+               # 매수 일지 데이터 준비
+               st.session_state['prefill_buy'] = {
+                   'stock_code': result['company_code'],
+                   'stock_name': result['company_name'],
+                   'ai_opinion': extract_buy_opinion(result['full_report']),
+                   'ai_summary': extract_summary(result['full_report']),
+                   'current_price': get_current_price(result['company_code'])
+               }
+               st.session_state['active_sidebar'] = 'buy_journal'
+               st.success("✅ 매수 일지로 이동합니다!")
+               st.rerun()
+
+       with col2:
+           if st.button("📊 매도 일지에 추가", use_container_width=True):
+               # 보유 중인 기록 확인
+               holdings = get_holdings_by_stock(result['company_code'])
+
+               if holdings:
+                   st.session_state['prefill_sell'] = {
+                       'stock_code': result['company_code'],
+                       'stock_name': result['company_name'],
+                       'ai_opinion': extract_sell_opinion(result['full_report']),
+                       'current_price': get_current_price(result['company_code'])
+                   }
+                   st.session_state['active_sidebar'] = 'sell_journal'
+                   st.success("✅ 매도 일지로 이동합니다!")
+                   st.rerun()
+               else:
+                   st.warning(f"⚠️ 보유 중인 {result['company_name']} 기록이 없습니다.")
+                   if st.button("매수 일지에 먼저 추가하기"):
+                       st.session_state['active_sidebar'] = 'buy_journal'
+                       st.rerun()
+   ```
+
+7. **사이드바 자동 입력 처리**:
+   ```python
+   # 매수 일지 사이드바
+   st.sidebar.header("📝 매수 일지")
+
+   # Prefill 데이터 확인
+   prefill = st.session_state.get('prefill_buy', {})
+
+   # 자동 입력된 필드 (수정 가능)
+   stock_input = st.sidebar.text_input(
+       "종목코드/종목명",
+       value=prefill.get('stock_code', ''),
+       disabled=bool(prefill)  # prefill 시 비활성화
+   )
+
+   # AI 의견 표시 (읽기 전용)
+   if prefill.get('ai_opinion'):
+       st.sidebar.info(f"🤖 AI 매수 의견:\n{prefill['ai_opinion']}")
+
+   # 현재가 자동 입력
+   buy_price = st.sidebar.number_input(
+       "매수 단가 (원)",
+       value=prefill.get('current_price', 0),
+       min_value=1,
+       step=100
+   )
+
+   # 사용자가 입력해야 하는 필드
+   buy_quantity = st.sidebar.number_input("매수 수량", min_value=1, step=1)
+   buy_date = st.sidebar.date_input("매수일", value=datetime.now())
+
+   if st.sidebar.button("💾 매수 기록 저장", type="primary"):
+       # 저장 로직
+       save_buy_record({
+           'stock_code': prefill['stock_code'],
+           'stock_name': prefill['stock_name'],
+           'buy_quantity': buy_quantity,
+           'buy_price': buy_price,
+           'buy_date': buy_date,
+           'ai_buy_opinion': prefill['ai_opinion'],
+           'ai_report_summary': prefill['ai_summary'],
+           # ...
+       })
+
+       # prefill 데이터 초기화
+       del st.session_state['prefill_buy']
+       st.success("✅ 매수 기록이 저장되었습니다!")
+   ```
+
+8. **Prefill 표시 방식**:
+   ```
+   ┌─────────────────────────────────────────┐
+   │  📝 매수 일지                            │
+   ├─────────────────────────────────────────┤
+   │  🎯 AI 분석 결과 자동 입력됨             │
+   │  ┌───────────────────────────────────┐  │
+   │  │ 종목: 삼성전자 (005930) 🔒        │  │
+   │  │ 현재가: 72,500원                  │  │
+   │  └───────────────────────────────────┘  │
+   │                                          │
+   │  🤖 AI 매수 의견:                        │
+   │  • 기술적 반등 시그널 포착               │
+   │  • 72,000원 지지선 안정적                │
+   │  • 단기 목표가 75,000원                  │
+   │                                          │
+   │  ✏️ 추가 입력 필요:                      │
+   │  매수 수량: [____] 주                    │
+   │  매수 단가: [72,500] 원                  │
+   │  매수일: [2025-01-09] 📅                │
+   │  메모: [________________]                │
+   │                                          │
+   │  [💾 매수 기록 저장]  [🔄 초기화]        │
+   └─────────────────────────────────────────┘
+   ```
+
+9. **데이터 흐름**:
+   ```
+   [AI 분석 탭]
+       analyze_stock(code, name)
+           ↓
+       분석 결과 저장 (st.session_state['last_analysis_result'])
+           ↓
+       "매수 일지에 추가" 버튼 표시
+           ↓
+   [사용자 클릭]
+       extract_buy_opinion() 실행
+       extract_summary() 실행
+       get_current_price() 실행
+           ↓
+       prefill 데이터 생성 (st.session_state['prefill_buy'])
+           ↓
+       사이드바 탭 전환 (st.session_state['active_sidebar'] = 'buy_journal')
+           ↓
+       st.rerun()
+           ↓
+   [매수 일지 사이드바]
+       prefill 데이터 확인
+           ↓
+       자동 입력 필드 표시 (종목, AI 의견, 현재가)
+           ↓
+       사용자 추가 입력 (수량, 날짜)
+           ↓
+       "저장" 클릭
+           ↓
+       DB INSERT
+           ↓
+       prefill 초기화
+   ```
+
+**장점**:
+- ✅ 중복 입력 제거 (종목코드, AI 의견 등)
+- ✅ 빠른 매매 기록 작성
+- ✅ AI 분석 결과와 실제 매매 기록 연동
+- ✅ 사용자 편의성 대폭 향상
+
+**주의사항**:
+- prefill 데이터는 세션 상태로 관리 (페이지 새로고침 시 초기화)
+- 사용자는 언제든지 자동 입력값을 수정 가능
+- AI 의견은 참고용이며, 최종 결정은 사용자 책임
+
+---
+
 ## 4. UI/UX 설계
 
 ### 4.1 전체 구조
@@ -586,17 +1027,30 @@ class TechnicalIndicators:
 - [ ] FinanceDataReader 연동
 - [ ] 단위 테스트
 
-### Phase 3: 매수/매도 일지 UI (1.5일)
+### Phase 3: 매수/매도 일지 UI (2일)
 - [ ] 매수 일지 사이드바 구현
 - [ ] 매도 일지 사이드바 구현
 - [ ] AI 분석 연동 (기존 코드 호출)
+- [ ] **AI 분석 결과 바로 적용 기능 (F-TJ-007)**:
+  - [ ] 분석 완료 후 "매수 일지에 추가" 버튼
+  - [ ] 분석 완료 후 "매도 일지에 추가" 버튼
+  - [ ] AI 의견 자동 추출 로직 (extract_buy_opinion, extract_sell_opinion)
+  - [ ] Prefill 데이터 세션 관리
+  - [ ] 사이드바 자동 전환 및 자동 입력
 - [ ] 입력 검증 및 에러 핸들링
 
-### Phase 4: 매매 내역 조회 (0.5일)
+### Phase 4: 매매 내역 조회 및 수정 (1일)
 - [ ] 매매 내역 목록 테이블
 - [ ] 필터링 기능
 - [ ] 상세 보기 확장
-- [ ] 수정/삭제 기능
+- [ ] **매매 기록 수정 기능 (F-TJ-006)**:
+  - [ ] 수정 UI (폼 또는 팝업)
+  - [ ] 자동 재계산 로직 (총액, 손익, 보유일수)
+  - [ ] 날짜 변경 시 기술적 지표 재계산
+  - [ ] 통계 캐시 무효화
+  - [ ] 변경 사항 요약 표시
+  - [ ] 데이터 검증 (매도수량 ≤ 매수수량 등)
+- [ ] 삭제 기능
 
 ### Phase 5: 통계 대시보드 (1.5일)
 - [ ] 월별 KPI 카드
@@ -607,11 +1061,13 @@ class TechnicalIndicators:
 
 ### Phase 6: 테스트 및 최적화 (0.5일)
 - [ ] 전체 기능 통합 테스트
+- [ ] 수정 기능 엣지 케이스 테스트
+- [ ] AI 바로 적용 기능 플로우 테스트
 - [ ] 성능 최적화 (쿼리, 캐싱)
 - [ ] UI/UX 개선
 - [ ] 문서화
 
-**총 예상 기간**: 5일
+**총 예상 기간**: 6일 (기능 추가로 +1일)
 
 ---
 
