@@ -34,6 +34,10 @@ from streamlit_apps.db_manager import TradingJournalDB
 from streamlit_apps.technical_indicators import get_indicators_for_buy
 from streamlit_apps.config_manager import ConfigManager
 from datetime import datetime, date
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from collections import defaultdict
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -986,7 +990,297 @@ def render_delete_confirmation():
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 10. 매수 일지 (Buy Journal)
+# 10. 통계 대시보드 (Statistics Dashboard)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def render_statistics_dashboard():
+    """통계 대시보드 UI (F-TJ-005)"""
+
+    st.header("📊 매매 통계 대시보드")
+
+    # DB 상태 체크
+    if st.session_state.trading_db is None:
+        st.error("데이터베이스를 사용할 수 없습니다.")
+        return
+
+    try:
+        # 전체 데이터 조회
+        all_records = st.session_state.trading_db.get_all_records()
+
+        if not all_records:
+            st.info("통계를 표시할 매매 기록이 없습니다.")
+            st.info("💡 먼저 '매수일지'와 '매도일지'에서 매매 기록을 작성하세요.")
+            return
+
+        # 1. 전체 KPI 카드
+        st.subheader("📈 전체 성과 지표")
+
+        # 전체 통계 계산
+        total_records = len(all_records)
+        closed_records = [r for r in all_records if r['sell_date'] is not None]
+        open_records = [r for r in all_records if r['sell_date'] is None]
+
+        total_profit = sum([r['profit_amount'] for r in closed_records if r['profit_amount'] is not None])
+        total_invested = sum([r['buy_amount'] for r in all_records if r['buy_amount'] is not None])
+
+        win_records = [r for r in closed_records if r['profit_amount'] and r['profit_amount'] > 0]
+        loss_records = [r for r in closed_records if r['profit_amount'] and r['profit_amount'] < 0]
+
+        win_rate = (len(win_records) / len(closed_records) * 100) if closed_records else 0
+        avg_profit_per_trade = (total_profit / len(closed_records)) if closed_records else 0
+
+        # KPI 표시
+        col1, col2, col3, col4, col5 = st.columns(5)
+
+        with col1:
+            st.metric("전체 매매", f"{total_records}건", delta=f"진행중 {len(open_records)}건")
+
+        with col2:
+            st.metric("매도 완료", f"{len(closed_records)}건")
+
+        with col3:
+            profit_delta_color = "normal" if total_profit >= 0 else "inverse"
+            st.metric(
+                "총 손익",
+                format_currency(total_profit),
+                delta=format_percentage(total_profit / total_invested * 100) if total_invested > 0 else "0%"
+            )
+
+        with col4:
+            st.metric("승률", f"{win_rate:.1f}%", delta=f"승 {len(win_records)} / 패 {len(loss_records)}")
+
+        with col5:
+            st.metric("평균 손익", format_currency(avg_profit_per_trade))
+
+        st.divider()
+
+        # 2. 월별 수익 추세 차트
+        st.subheader("📊 월별 수익 추세")
+
+        # 월별 데이터 집계
+        monthly_data = defaultdict(lambda: {'profit': 0, 'count': 0, 'win': 0, 'loss': 0})
+
+        for record in closed_records:
+            if record['sell_date'] and record['profit_amount'] is not None:
+                month_key = record['sell_date'][:7]  # YYYY-MM
+                monthly_data[month_key]['profit'] += record['profit_amount']
+                monthly_data[month_key]['count'] += 1
+                if record['profit_amount'] > 0:
+                    monthly_data[month_key]['win'] += 1
+                else:
+                    monthly_data[month_key]['loss'] += 1
+
+        if monthly_data:
+            # DataFrame 생성
+            months = sorted(monthly_data.keys())
+            df_monthly = pd.DataFrame({
+                '월': months,
+                '손익': [monthly_data[m]['profit'] for m in months],
+                '매매 건수': [monthly_data[m]['count'] for m in months],
+                '승': [monthly_data[m]['win'] for m in months],
+                '패': [monthly_data[m]['loss'] for m in months]
+            })
+
+            # 차트 생성
+            fig = go.Figure()
+
+            fig.add_trace(go.Bar(
+                x=df_monthly['월'],
+                y=df_monthly['손익'],
+                name='월별 손익',
+                marker_color=['green' if x > 0 else 'red' for x in df_monthly['손익']],
+                text=[format_currency(x) for x in df_monthly['손익']],
+                textposition='outside'
+            ))
+
+            fig.update_layout(
+                title='월별 손익 추세',
+                xaxis_title='월',
+                yaxis_title='손익 (원)',
+                height=400
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # 월별 상세 데이터 테이블
+            with st.expander("월별 상세 데이터"):
+                st.dataframe(df_monthly, use_container_width=True)
+
+        else:
+            st.info("월별 수익 데이터가 없습니다.")
+
+        st.divider()
+
+        # 3. 수익/손실 비율 파이 차트
+        st.subheader("🎯 수익/손실 비율")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # 손익 비율 파이 차트
+            if closed_records:
+                even_records = [r for r in closed_records if r['profit_amount'] == 0]
+
+                profit_data = pd.DataFrame({
+                    '구분': ['수익', '손실', '본전'],
+                    '건수': [len(win_records), len(loss_records), len(even_records)]
+                })
+
+                fig_pie = px.pie(
+                    profit_data,
+                    values='건수',
+                    names='구분',
+                    title='수익/손실 건수 비율',
+                    color='구분',
+                    color_discrete_map={'수익': 'green', '손실': 'red', '본전': 'gray'}
+                )
+
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.info("수익/손실 데이터가 없습니다.")
+
+        with col2:
+            # 손익 금액 파이 차트
+            if win_records or loss_records:
+                total_profit_amount = sum([r['profit_amount'] for r in win_records])
+                total_loss_amount = abs(sum([r['profit_amount'] for r in loss_records]))
+
+                amount_data = pd.DataFrame({
+                    '구분': ['수익', '손실'],
+                    '금액': [total_profit_amount, total_loss_amount]
+                })
+
+                fig_amount = px.pie(
+                    amount_data,
+                    values='금액',
+                    names='구분',
+                    title='수익/손실 금액 비율',
+                    color='구분',
+                    color_discrete_map={'수익': 'green', '손실': 'red'}
+                )
+
+                st.plotly_chart(fig_amount, use_container_width=True)
+            else:
+                st.info("수익/손실 금액 데이터가 없습니다.")
+
+        st.divider()
+
+        # 4. Top 5 종목 (수익 & 손실)
+        st.subheader("🏆 Top 5 종목")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Top 5 수익 종목
+            st.markdown("#### 📈 Top 5 수익 종목")
+
+            if win_records:
+                top_profit = sorted(win_records, key=lambda x: x['profit_amount'], reverse=True)[:5]
+
+                top_profit_df = pd.DataFrame({
+                    '종목': [f"{r['stock_name']}\n({r['stock_code']})" for r in top_profit],
+                    '손익': [r['profit_amount'] for r in top_profit]
+                })
+
+                fig_top_profit = px.bar(
+                    top_profit_df,
+                    x='손익',
+                    y='종목',
+                    orientation='h',
+                    title='Top 5 수익 종목',
+                    color='손익',
+                    color_continuous_scale='Greens',
+                    text=[format_currency(x) for x in top_profit_df['손익']]
+                )
+
+                fig_top_profit.update_layout(height=400)
+                st.plotly_chart(fig_top_profit, use_container_width=True)
+            else:
+                st.info("수익 종목이 없습니다.")
+
+        with col2:
+            # Top 5 손실 종목
+            st.markdown("#### 📉 Top 5 손실 종목")
+
+            if loss_records:
+                top_loss = sorted(loss_records, key=lambda x: x['profit_amount'])[:5]
+
+                top_loss_df = pd.DataFrame({
+                    '종목': [f"{r['stock_name']}\n({r['stock_code']})" for r in top_loss],
+                    '손익': [abs(r['profit_amount']) for r in top_loss]
+                })
+
+                fig_top_loss = px.bar(
+                    top_loss_df,
+                    x='손익',
+                    y='종목',
+                    orientation='h',
+                    title='Top 5 손실 종목',
+                    color='손익',
+                    color_continuous_scale='Reds',
+                    text=[format_currency(-x) for x in top_loss_df['손익']]
+                )
+
+                fig_top_loss.update_layout(height=400)
+                st.plotly_chart(fig_top_loss, use_container_width=True)
+            else:
+                st.info("손실 종목이 없습니다.")
+
+        st.divider()
+
+        # 5. 데이터 다운로드
+        st.subheader("💾 데이터 다운로드")
+
+        # CSV 생성
+        df_all = pd.DataFrame(all_records)
+
+        # CSV 다운로드 버튼
+        csv = df_all.to_csv(index=False, encoding='utf-8-sig')
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.download_button(
+                label="📥 전체 데이터 CSV 다운로드",
+                data=csv,
+                file_name=f"trading_records_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+        # 매도 완료 데이터만
+        if closed_records:
+            df_closed = pd.DataFrame(closed_records)
+            csv_closed = df_closed.to_csv(index=False, encoding='utf-8-sig')
+
+            with col2:
+                st.download_button(
+                    label="📥 매도 완료 데이터 CSV",
+                    data=csv_closed,
+                    file_name=f"closed_records_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+        # 월별 통계 다운로드
+        if monthly_data:
+            csv_monthly = df_monthly.to_csv(index=False, encoding='utf-8-sig')
+
+            with col3:
+                st.download_button(
+                    label="📥 월별 통계 CSV",
+                    data=csv_monthly,
+                    file_name=f"monthly_stats_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+    except Exception as e:
+        st.error(f"통계 조회 실패: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 11. 매수 일지 (Buy Journal)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def render_buy_journal():
@@ -1445,7 +1739,7 @@ def main():
     st.caption("12개 전문 AI 에이전트의 협업 분석 + 매매 일지")
 
     # 뷰 선택 탭
-    main_tab1, main_tab2 = st.tabs(["📊 AI 분석", "📋 매매 내역"])
+    main_tab1, main_tab2, main_tab3 = st.tabs(["📊 AI 분석", "📋 매매 내역", "📈 통계"])
 
     with main_tab1:
         # AI 분석 결과 뷰
@@ -1460,6 +1754,10 @@ def main():
         else:
             # 매매 내역 뷰
             render_trading_history()
+
+    with main_tab3:
+        # 통계 대시보드 뷰
+        render_statistics_dashboard()
 
 
 def render_analysis_view(stock_input: str, analyze_btn: bool):
