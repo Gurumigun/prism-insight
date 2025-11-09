@@ -450,7 +450,543 @@ def render_qa_section():
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 8. 매수 일지 (Buy Journal)
+# 8. 매매 내역 조회 (Trading History)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def render_trading_history():
+    """매매 내역 조회 UI (F-TJ-003, F-TJ-004)"""
+
+    st.header("📊 매매 내역")
+
+    # DB 상태 체크
+    if st.session_state.trading_db is None:
+        st.error("데이터베이스를 사용할 수 없습니다.")
+        return
+
+    # 1. 필터 섹션
+    with st.expander("🔍 필터", expanded=True):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            # 날짜 범위 필터
+            date_from = st.date_input(
+                "시작일",
+                value=date.today().replace(month=1, day=1),  # 올해 1월 1일
+                key="history_date_from"
+            )
+
+        with col2:
+            date_to = st.date_input(
+                "종료일",
+                value=date.today(),
+                key="history_date_to"
+            )
+
+        with col3:
+            # 종목 필터
+            stock_filter = st.text_input(
+                "종목 검색",
+                placeholder="종목코드 또는 종목명",
+                key="history_stock_filter"
+            )
+
+        col4, col5 = st.columns(2)
+
+        with col4:
+            # 상태 필터
+            status_filter = st.selectbox(
+                "매매 상태",
+                options=["전체", "보유중", "매도완료"],
+                key="history_status_filter"
+            )
+
+        with col5:
+            # 손익 필터
+            profit_filter = st.selectbox(
+                "손익 상태",
+                options=["전체", "수익", "손실", "본전"],
+                key="history_profit_filter"
+            )
+
+    # 2. 데이터 조회
+    try:
+        # 날짜 범위로 기록 조회
+        records = st.session_state.trading_db.get_records_by_date_range(
+            date_from.strftime("%Y-%m-%d"),
+            date_to.strftime("%Y-%m-%d")
+        )
+
+        if not records:
+            st.info("조회된 매매 기록이 없습니다.")
+            return
+
+        # 필터 적용
+        filtered_records = []
+        for record in records:
+            # 종목 필터
+            if stock_filter:
+                if stock_filter not in record['stock_code'] and stock_filter not in record['stock_name']:
+                    continue
+
+            # 상태 필터
+            if status_filter == "보유중" and record['sell_date'] is not None:
+                continue
+            if status_filter == "매도완료" and record['sell_date'] is None:
+                continue
+
+            # 손익 필터 (매도 완료된 경우만)
+            if record['sell_date'] is not None:
+                if profit_filter == "수익" and (record['profit_amount'] is None or record['profit_amount'] <= 0):
+                    continue
+                if profit_filter == "손실" and (record['profit_amount'] is None or record['profit_amount'] >= 0):
+                    continue
+                if profit_filter == "본전" and (record['profit_amount'] is None or record['profit_amount'] != 0):
+                    continue
+
+            filtered_records.append(record)
+
+        if not filtered_records:
+            st.info("필터 조건에 맞는 매매 기록이 없습니다.")
+            return
+
+        # 3. 요약 통계
+        st.subheader("📈 요약 통계")
+        col1, col2, col3, col4 = st.columns(4)
+
+        total_records = len(filtered_records)
+        open_positions = len([r for r in filtered_records if r['sell_date'] is None])
+        closed_positions = total_records - open_positions
+
+        total_profit = sum([r['profit_amount'] for r in filtered_records if r['profit_amount'] is not None])
+        win_count = len([r for r in filtered_records if r['profit_amount'] and r['profit_amount'] > 0])
+        win_rate = (win_count / closed_positions * 100) if closed_positions > 0 else 0
+
+        with col1:
+            st.metric("전체 기록", f"{total_records}건")
+
+        with col2:
+            st.metric("보유중", f"{open_positions}건")
+
+        with col3:
+            st.metric("매도완료", f"{closed_positions}건")
+
+        with col4:
+            profit_color = "normal" if total_profit == 0 else ("inverse" if total_profit > 0 else "off")
+            st.metric(
+                "총 손익",
+                format_currency(total_profit),
+                delta=f"승률 {win_rate:.1f}%"
+            )
+
+        st.divider()
+
+        # 4. 매매 내역 테이블
+        st.subheader("📋 매매 내역")
+
+        # 테이블 헤더 스타일
+        st.markdown("""
+        <style>
+        .record-row {
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-radius: 0.5rem;
+            border: 1px solid #e0e0e0;
+        }
+        .record-profit {
+            font-weight: bold;
+        }
+        .record-profit.positive {
+            color: #4CAF50;
+        }
+        .record-profit.negative {
+            color: #f44336;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # 각 기록을 expander로 표시
+        for idx, record in enumerate(filtered_records, 1):
+            # 기록 상태 및 손익에 따른 아이콘
+            if record['sell_date'] is None:
+                status_icon = "🔵"  # 보유중
+                status_text = "보유중"
+            else:
+                if record['profit_amount'] > 0:
+                    status_icon = "🟢"  # 수익
+                    status_text = f"+{format_currency(record['profit_amount'])}"
+                elif record['profit_amount'] < 0:
+                    status_icon = "🔴"  # 손실
+                    status_text = f"{format_currency(record['profit_amount'])}"
+                else:
+                    status_icon = "⚪"  # 본전
+                    status_text = "본전"
+
+            # Expander 타이틀
+            expander_title = f"{status_icon} [{record['id']}] {record['stock_name']}({record['stock_code']}) - {record['buy_date']} - {status_text}"
+
+            with st.expander(expander_title, expanded=False):
+                # 상세 정보
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("#### 📥 매수 정보")
+                    st.markdown(f"""
+                    - **매수일**: {record['buy_date']}
+                    - **매수 수량**: {record['buy_quantity']}주
+                    - **매수 단가**: {format_currency(record['buy_price'])}
+                    - **매수 금액**: {format_currency(record['buy_amount'])}
+                    - **매수 이유**: {record['buy_reason'][:100]}...
+                    """)
+
+                with col2:
+                    if record['sell_date'] is not None:
+                        st.markdown("#### 📤 매도 정보")
+                        st.markdown(f"""
+                        - **매도일**: {record['sell_date']}
+                        - **매도 수량**: {record['sell_quantity']}주
+                        - **매도 단가**: {format_currency(record['sell_price'])}
+                        - **매도 금액**: {format_currency(record['sell_amount'])}
+                        - **보유 기간**: {record['holding_days']}일
+                        - **손익**: {format_currency(record['profit_amount'])} ({format_percentage(record['profit_rate'])})
+                        """)
+                    else:
+                        st.markdown("#### 📤 매도 정보")
+                        st.info("아직 매도하지 않았습니다.")
+
+                # 액션 버튼
+                st.divider()
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    if st.button("📝 수정", key=f"edit_{record['id']}", use_container_width=True):
+                        st.session_state.edit_record_id = record['id']
+                        st.rerun()
+
+                with col2:
+                    if st.button("🗑️ 삭제", key=f"delete_{record['id']}", use_container_width=True, type="secondary"):
+                        st.session_state.delete_record_id = record['id']
+                        st.rerun()
+
+                with col3:
+                    if st.button("📊 상세보기", key=f"detail_{record['id']}", use_container_width=True):
+                        render_record_detail(record)
+
+    except Exception as e:
+        st.error(f"매매 내역 조회 실패: {e}")
+
+
+def render_record_detail(record: dict):
+    """매매 기록 상세보기"""
+    st.subheader(f"📊 매매 기록 상세 - {record['stock_name']}")
+
+    # 기본 정보
+    st.markdown("### 📋 기본 정보")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("종목코드", record['stock_code'])
+        st.metric("매수일", record['buy_date'])
+
+    with col2:
+        st.metric("종목명", record['stock_name'])
+        if record['sell_date']:
+            st.metric("매도일", record['sell_date'])
+
+    with col3:
+        st.metric("매수 수량", f"{record['buy_quantity']}주")
+        if record['sell_date']:
+            st.metric("보유 기간", f"{record['holding_days']}일")
+
+    # 매수 정보
+    st.markdown("### 📥 매수 정보")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("매수 단가", format_currency(record['buy_price']))
+        st.metric("매수 금액", format_currency(record['buy_amount']))
+
+    with col2:
+        st.markdown("**매수 이유**")
+        st.text_area("", value=record['buy_reason'], disabled=True, key=f"detail_buy_reason_{record['id']}", height=100)
+
+    # 매도 정보 (있는 경우)
+    if record['sell_date']:
+        st.markdown("### 📤 매도 정보")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.metric("매도 단가", format_currency(record['sell_price']))
+            st.metric("매도 금액", format_currency(record['sell_amount']))
+            st.metric("손익", format_currency(record['profit_amount']), delta=format_percentage(record['profit_rate']))
+
+        with col2:
+            st.markdown("**매도 이유**")
+            st.text_area("", value=record['sell_reason'], disabled=True, key=f"detail_sell_reason_{record['id']}", height=100)
+
+    # 기술적 지표
+    if record.get('buy_rsi_14') is not None:
+        st.markdown("### 📊 기술적 지표")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**매수 시점 지표**")
+            st.json({
+                'RSI(14)': record.get('buy_rsi_14'),
+                'RSI(16)': record.get('buy_rsi_16'),
+                'MACD': record.get('buy_macd_value'),
+                'MACD Signal': record.get('buy_macd_signal'),
+                'MA(20)': record.get('buy_ma_20'),
+                'MA(60)': record.get('buy_ma_60'),
+            })
+
+        with col2:
+            if record['sell_date']:
+                st.markdown("**매도 시점 지표**")
+                st.json({
+                    'RSI(14)': record.get('sell_rsi_14'),
+                    'RSI(16)': record.get('sell_rsi_16'),
+                    'MACD': record.get('sell_macd_value'),
+                    'MACD Signal': record.get('sell_macd_signal'),
+                    'MA(20)': record.get('sell_ma_20'),
+                    'MA(60)': record.get('sell_ma_60'),
+                })
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 9. 매매 기록 수정/삭제 (Edit/Delete)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def render_edit_record_modal():
+    """매매 기록 수정 모달 (F-TJ-006)"""
+
+    if 'edit_record_id' not in st.session_state or st.session_state.edit_record_id is None:
+        return
+
+    record_id = st.session_state.edit_record_id
+
+    # 기록 조회
+    try:
+        record = st.session_state.trading_db.get_record_by_id(record_id)
+
+        if not record:
+            st.error(f"기록을 찾을 수 없습니다: ID {record_id}")
+            st.session_state.edit_record_id = None
+            return
+
+        st.header(f"📝 매매 기록 수정 - {record['stock_name']}")
+
+        # 수정 폼
+        with st.form(key=f"edit_form_{record_id}"):
+            st.markdown("### 📊 기본 정보")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                stock_code = st.text_input("종목 코드", value=record['stock_code'], disabled=True)
+                stock_name = st.text_input("종목명", value=record['stock_name'], disabled=True)
+
+            with col2:
+                st.info(f"기록 ID: {record_id}")
+
+            st.markdown("### 📥 매수 정보")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                buy_date = st.date_input(
+                    "매수일",
+                    value=datetime.strptime(record['buy_date'], "%Y-%m-%d").date(),
+                    key=f"edit_buy_date_{record_id}"
+                )
+
+            with col2:
+                buy_quantity = st.number_input(
+                    "매수 수량",
+                    min_value=1,
+                    value=record['buy_quantity'],
+                    step=1,
+                    key=f"edit_buy_quantity_{record_id}"
+                )
+
+            with col3:
+                buy_price = st.number_input(
+                    "매수 단가",
+                    min_value=1,
+                    value=record['buy_price'],
+                    step=100,
+                    key=f"edit_buy_price_{record_id}"
+                )
+
+            buy_reason = st.text_area(
+                "매수 이유",
+                value=record['buy_reason'],
+                height=100,
+                key=f"edit_buy_reason_{record_id}"
+            )
+
+            # 매도 정보 (있는 경우)
+            if record['sell_date']:
+                st.markdown("### 📤 매도 정보")
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    sell_date = st.date_input(
+                        "매도일",
+                        value=datetime.strptime(record['sell_date'], "%Y-%m-%d").date(),
+                        min_value=buy_date,
+                        key=f"edit_sell_date_{record_id}"
+                    )
+
+                with col2:
+                    sell_quantity = st.number_input(
+                        "매도 수량",
+                        min_value=1,
+                        max_value=buy_quantity,
+                        value=record['sell_quantity'],
+                        step=1,
+                        key=f"edit_sell_quantity_{record_id}"
+                    )
+
+                with col3:
+                    sell_price = st.number_input(
+                        "매도 단가",
+                        min_value=1,
+                        value=record['sell_price'],
+                        step=100,
+                        key=f"edit_sell_price_{record_id}"
+                    )
+
+                sell_reason = st.text_area(
+                    "매도 이유",
+                    value=record['sell_reason'] or '',
+                    height=100,
+                    key=f"edit_sell_reason_{record_id}"
+                )
+
+            # 제출 버튼
+            col1, col2 = st.columns(2)
+
+            with col1:
+                submit_btn = st.form_submit_button("💾 수정 저장", use_container_width=True, type="primary")
+
+            with col2:
+                cancel_btn = st.form_submit_button("❌ 취소", use_container_width=True)
+
+            # 폼 제출 처리
+            if submit_btn:
+                # 수정 데이터 준비
+                updated_data = {
+                    'buy_date': buy_date.strftime("%Y-%m-%d"),
+                    'buy_quantity': buy_quantity,
+                    'buy_price': buy_price,
+                    'buy_reason': buy_reason,
+                }
+
+                # 매도 정보 추가 (있는 경우)
+                if record['sell_date']:
+                    updated_data.update({
+                        'sell_date': sell_date.strftime("%Y-%m-%d"),
+                        'sell_quantity': sell_quantity,
+                        'sell_price': sell_price,
+                        'sell_reason': sell_reason,
+                    })
+
+                # DB 업데이트 (F-TJ-006: 자동 재계산 포함)
+                with st.spinner("수정 중..."):
+                    try:
+                        success, changes = st.session_state.trading_db.update_record(record_id, updated_data)
+
+                        if success:
+                            st.success(f"✅ 매매 기록이 수정되었습니다!")
+
+                            # 변경 사항 표시
+                            if changes:
+                                st.info("**변경된 항목:**")
+                                for key, (old_val, new_val) in changes.items():
+                                    st.text(f"- {key}: {old_val} → {new_val}")
+
+                            # 세션 상태 초기화
+                            st.session_state.edit_record_id = None
+                            st.rerun()
+                        else:
+                            st.error("매매 기록 수정에 실패했습니다.")
+
+                    except Exception as e:
+                        st.error(f"수정 중 오류 발생: {e}")
+
+            if cancel_btn:
+                st.session_state.edit_record_id = None
+                st.rerun()
+
+    except Exception as e:
+        st.error(f"기록 조회 실패: {e}")
+        st.session_state.edit_record_id = None
+
+
+def render_delete_confirmation():
+    """매매 기록 삭제 확인 모달 (F-TJ-004)"""
+
+    if 'delete_record_id' not in st.session_state or st.session_state.delete_record_id is None:
+        return
+
+    record_id = st.session_state.delete_record_id
+
+    # 기록 조회
+    try:
+        record = st.session_state.trading_db.get_record_by_id(record_id)
+
+        if not record:
+            st.error(f"기록을 찾을 수 없습니다: ID {record_id}")
+            st.session_state.delete_record_id = None
+            return
+
+        st.header("🗑️ 매매 기록 삭제 확인")
+
+        st.warning(f"""
+        **정말로 다음 기록을 삭제하시겠습니까?**
+
+        - 기록 ID: {record_id}
+        - 종목: {record['stock_name']} ({record['stock_code']})
+        - 매수일: {record['buy_date']}
+        - 매수 금액: {format_currency(record['buy_amount'])}
+        """)
+
+        if record['sell_date']:
+            st.info(f"""
+            - 매도일: {record['sell_date']}
+            - 손익: {format_currency(record['profit_amount'])} ({format_percentage(record['profit_rate'])})
+            """)
+
+        st.error("⚠️ 이 작업은 되돌릴 수 없습니다!")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("🗑️ 삭제 확정", use_container_width=True, type="primary"):
+                try:
+                    success = st.session_state.trading_db.delete_record(record_id)
+
+                    if success:
+                        st.success(f"✅ 매매 기록이 삭제되었습니다! (ID: {record_id})")
+                        st.session_state.delete_record_id = None
+                        st.rerun()
+                    else:
+                        st.error("매매 기록 삭제에 실패했습니다.")
+
+                except Exception as e:
+                    st.error(f"삭제 중 오류 발생: {e}")
+
+        with col2:
+            if st.button("❌ 취소", use_container_width=True):
+                st.session_state.delete_record_id = None
+                st.rerun()
+
+    except Exception as e:
+        st.error(f"기록 조회 실패: {e}")
+        st.session_state.delete_record_id = None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 10. 매수 일지 (Buy Journal)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def render_buy_journal():
@@ -904,9 +1440,30 @@ def main():
     # 사이드바
     stock_input, analyze_btn = render_sidebar()
 
-    # 메인 영역
+    # 메인 영역 - 뷰 선택 탭
     st.title("🤖 PRISM-INSIGHT AI 주식 분석")
-    st.caption("12개 전문 AI 에이전트의 협업 분석")
+    st.caption("12개 전문 AI 에이전트의 협업 분석 + 매매 일지")
+
+    # 뷰 선택 탭
+    main_tab1, main_tab2 = st.tabs(["📊 AI 분석", "📋 매매 내역"])
+
+    with main_tab1:
+        # AI 분석 결과 뷰
+        render_analysis_view(stock_input, analyze_btn)
+
+    with main_tab2:
+        # 수정/삭제 모달 체크
+        if hasattr(st.session_state, 'edit_record_id') and st.session_state.edit_record_id is not None:
+            render_edit_record_modal()
+        elif hasattr(st.session_state, 'delete_record_id') and st.session_state.delete_record_id is not None:
+            render_delete_confirmation()
+        else:
+            # 매매 내역 뷰
+            render_trading_history()
+
+
+def render_analysis_view(stock_input: str, analyze_btn: bool):
+    """AI 분석 결과 뷰 렌더링"""
 
     # 분석 실행
     if analyze_btn and stock_input:
