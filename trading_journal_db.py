@@ -58,7 +58,9 @@ class TradingJournalDB:
                 scenario TEXT,
                 rsi REAL,
                 macd REAL,
-                adr REAL
+                adr REAL,
+                market_kospi_adr REAL,
+                market_kosdaq_adr REAL
             )
         """)
 
@@ -113,6 +115,8 @@ class TradingJournalDB:
                     rsi,
                     macd,
                     adr,
+                    market_kospi_adr,
+                    market_kosdaq_adr,
                     scenario,
                     last_updated
                 FROM stock_holdings
@@ -248,6 +252,8 @@ class TradingJournalDB:
         rsi: Optional[float] = None,
         macd: Optional[float] = None,
         adr: Optional[float] = None,
+        market_kospi_adr: Optional[float] = None,
+        market_kosdaq_adr: Optional[float] = None,
         scenario: Optional[str] = None
     ) -> bool:
         """
@@ -262,17 +268,32 @@ class TradingJournalDB:
             rsi: RSI 지표
             macd: MACD 지표
             adr: ADR 지표
+            market_kospi_adr: 코스피 시장 ADR
+            market_kosdaq_adr: 코스닥 시장 ADR
             scenario: 시나리오 정보 (JSON 문자열)
 
         Returns:
             성공 여부
         """
         try:
+            # market_kospi_adr, market_kosdaq_adr 컬럼 추가 (기존 테이블 대응)
+            try:
+                self.cursor.execute("ALTER TABLE stock_holdings ADD COLUMN market_kospi_adr REAL")
+                self.conn.commit()
+            except:
+                pass
+
+            try:
+                self.cursor.execute("ALTER TABLE stock_holdings ADD COLUMN market_kosdaq_adr REAL")
+                self.conn.commit()
+            except:
+                pass
+
             self.cursor.execute("""
                 INSERT OR REPLACE INTO stock_holdings
                 (ticker, company_name, buy_price, buy_date, quantity, current_price,
-                 rsi, macd, adr, scenario, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, scenario, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ticker,
                 company_name,
@@ -283,6 +304,8 @@ class TradingJournalDB:
                 rsi,
                 macd,
                 adr,
+                market_kospi_adr,
+                market_kosdaq_adr,
                 scenario,
                 buy_date
             ))
@@ -292,7 +315,7 @@ class TradingJournalDB:
             return True
 
         except Exception as e:
-            logger.error(f"매수 기록 저장 실패: {str(e)}")
+            logger.error(f"매수 기록 저장 실피: {str(e)}")
             return False
 
     def get_statistics(self) -> Dict[str, Any]:

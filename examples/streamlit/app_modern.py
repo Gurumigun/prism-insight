@@ -962,6 +962,39 @@ asyncio.run(run())
         except:
             return None
 
+    def calculate_market_adr(self, date_str, period=20):
+        """코스피/코스닥 시장 ADR 계산"""
+        try:
+            from datetime import datetime, timedelta
+
+            # 날짜 파싱
+            target_date = datetime.strptime(date_str, "%Y%m%d")
+            start_date = (target_date - timedelta(days=period + 30)).strftime("%Y%m%d")  # 여유있게
+            end_date = date_str
+
+            # 코스피 지수 데이터
+            kospi_df = stock.get_index_ohlcv(start_date, end_date, "1001")  # 코스피
+            kosdaq_df = stock.get_index_ohlcv(start_date, end_date, "2001")  # 코스닥
+
+            kospi_adr = None
+            kosdaq_adr = None
+
+            if not kospi_df.empty and len(kospi_df) >= period:
+                high_low = kospi_df['고가'] - kospi_df['저가']
+                adr_series = high_low.rolling(window=period).mean()
+                kospi_adr = round(adr_series.iloc[-1], 2) if not adr_series.empty else None
+
+            if not kosdaq_df.empty and len(kosdaq_df) >= period:
+                high_low = kosdaq_df['고가'] - kosdaq_df['저가']
+                adr_series = high_low.rolling(window=period).mean()
+                kosdaq_adr = round(adr_series.iloc[-1], 2) if not adr_series.empty else None
+
+            return kospi_adr, kosdaq_adr
+
+        except Exception as e:
+            print(f"시장 ADR 계산 실패: {str(e)}")
+            return None, None
+
     def get_stock_info(self, ticker):
         """종목 정보 조회 및 기술적 지표 계산"""
         if stock is None:
@@ -1041,7 +1074,7 @@ asyncio.run(run())
 
         return fig
 
-    def save_buy_record(self, ticker, company_name, buy_price, quantity, rsi, macd, adr, reason):
+    def save_buy_record(self, ticker, company_name, buy_price, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
         """매수 기록 저장"""
         try:
             # 데이터베이스 경로를 project_root로 명시
@@ -1066,6 +1099,8 @@ asyncio.run(run())
                     rsi=rsi,
                     macd=macd,
                     adr=adr,
+                    market_kospi_adr=market_kospi_adr,
+                    market_kosdaq_adr=market_kosdaq_adr,
                     scenario=json.dumps(scenario, ensure_ascii=False)
                 )
 
@@ -1116,6 +1151,10 @@ asyncio.run(run())
                         if stock_name is None:
                             st.error("종목을 찾을 수 없습니다. 종목코드를 확인해주세요.")
                         else:
+                            # 시장 ADR 계산 (당일 기준)
+                            today_str = datetime.now().strftime("%Y%m%d")
+                            kospi_adr, kosdaq_adr = self.calculate_market_adr(today_str)
+
                             # 세션 상태에 저장
                             st.session_state.searched_ticker = ticker_input
                             st.session_state.searched_name = stock_name
@@ -1124,6 +1163,8 @@ asyncio.run(run())
                             st.session_state.searched_rsi = rsi
                             st.session_state.searched_macd = macd
                             st.session_state.searched_adr = adr
+                            st.session_state.searched_kospi_adr = kospi_adr
+                            st.session_state.searched_kosdaq_adr = kosdaq_adr
 
             # 종목 정보가 있으면 표시
             if hasattr(st.session_state, 'searched_ticker'):
@@ -1134,6 +1175,8 @@ asyncio.run(run())
                 rsi_value = st.session_state.get('searched_rsi', 0)
                 macd_value = st.session_state.get('searched_macd', 0)
                 adr_value = st.session_state.get('searched_adr', 0)
+                kospi_adr_value = st.session_state.get('searched_kospi_adr', 0)
+                kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
 
                 st.success(f"✅ 종목 조회 완료: {stock_name} ({ticker})")
 
@@ -1154,78 +1197,117 @@ asyncio.run(run())
                 # 매수 정보 입력 폼 (차트 위로 이동)
                 st.markdown("### 💰 매수 정보 입력")
 
-                with st.form("buy_record_form"):
-                    col1, col2, col3 = st.columns(3)
+                # 기술적 지표 현재 값 표시 (읽기 전용)
+                st.markdown("#### 📊 자동 계산된 기술적 지표")
+                ind_col1, ind_col2, ind_col3, ind_col4, ind_col5 = st.columns(5)
+                with ind_col1:
+                    st.metric("RSI", f"{rsi_value:.2f}" if rsi_value else "N/A", help="상대강도지수 (0~100)")
+                with ind_col2:
+                    st.metric("MACD", f"{macd_value:.2f}" if macd_value else "N/A", help="이동평균수렴확산지수")
+                with ind_col3:
+                    st.metric("종목 ADR", f"{adr_value:.2f}" if adr_value else "N/A", help="평균 일일 변동폭")
+                with ind_col4:
+                    st.metric("코스피 ADR", f"{kospi_adr_value:.2f}" if kospi_adr_value else "N/A", help="코스피 시장 ADR")
+                with ind_col5:
+                    st.metric("코스닥 ADR", f"{kosdaq_adr_value:.2f}" if kosdaq_adr_value else "N/A", help="코스닥 시장 ADR")
 
+                st.markdown("---")
+
+                with st.form("buy_record_form"):
+                    st.markdown("#### 💵 거래 정보")
+                    # 첫 번째 행: 매수가, 수량, 매수일
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         buy_price = st.number_input(
-                            "매수가 (원) *",
+                            "💰 매수가 (원) *",
                             min_value=1,
                             value=int(current_price) if current_price else 0,
                             step=100,
                             help="실제 매수한 가격을 입력해주세요"
                         )
-
+                    with col2:
                         quantity = st.number_input(
-                            "매수 수량 *",
+                            "📦 매수 수량 *",
                             min_value=1,
                             value=1,
                             step=1,
                             help="매수한 주식 수량"
                         )
-
-                    with col2:
+                    with col3:
                         buy_date = st.date_input(
-                            "매수일 *",
+                            "📅 매수일 *",
                             value=datetime.now(),
-                            max_value=datetime.now()
+                            max_value=datetime.now(),
+                            help="매수한 날짜"
                         )
 
+                    st.markdown("#### 📈 기술적 지표 (수정 가능)")
+                    # 두 번째 행: 기술적 지표
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
                         rsi = st.number_input(
                             "RSI",
                             min_value=0.0,
                             max_value=100.0,
                             value=float(rsi_value) if rsi_value else 50.0,
-                            step=0.01,
+                            step=0.1,
                             help="상대강도지수 (0~100)"
                         )
-
-                    with col3:
+                    with col2:
                         macd = st.number_input(
                             "MACD",
                             value=float(macd_value) if macd_value else 0.0,
-                            step=0.01,
+                            step=0.1,
                             help="이동평균수렴확산지수"
                         )
-
+                    with col3:
                         adr = st.number_input(
-                            "ADR (평균 일일 변동폭)",
+                            "종목 ADR",
                             min_value=0.0,
                             value=float(adr_value) if adr_value else 0.0,
-                            step=0.01,
+                            step=0.1,
                             help="평균 일일 변동폭"
                         )
+                    with col4:
+                        market_kospi_adr = st.number_input(
+                            "코스피 ADR",
+                            min_value=0.0,
+                            value=float(kospi_adr_value) if kospi_adr_value else 0.0,
+                            step=0.1,
+                            help="코스피 시장 ADR"
+                        )
+                    with col5:
+                        market_kosdaq_adr = st.number_input(
+                            "코스닥 ADR",
+                            min_value=0.0,
+                            value=float(kosdaq_adr_value) if kosdaq_adr_value else 0.0,
+                            step=0.1,
+                            help="코스닥 시장 ADR"
+                        )
 
-                    # 매수 이유 (선택사항)
+                    st.markdown("#### 📝 투자 근거 (선택사항)")
+                    # 매수 이유
                     reason = st.text_area(
-                        "매수 이유 (선택사항)",
+                        "매수 이유",
                         placeholder="이 종목을 매수한 이유를 간단히 작성해주세요...",
-                        height=100
+                        height=100,
+                        label_visibility="collapsed"
                     )
 
                     # 제출 버튼
+                    st.markdown("")  # 간격 추가
                     col1, col2, col3 = st.columns([1, 1, 1])
                     with col2:
                         submitted = st.form_submit_button("💾 매수 기록 저장", use_container_width=True, type="primary")
 
                     if submitted:
                         if buy_price <= 0:
-                            st.error("매수가를 입력해주세요.")
+                            st.error("❌ 매수가를 입력해주세요.")
                         elif quantity <= 0:
-                            st.error("매수 수량을 입력해주세요.")
+                            st.error("❌ 매수 수량을 입력해주세요.")
                         else:
                             # 저장
-                            if self.save_buy_record(ticker, stock_name, buy_price, quantity, rsi, macd, adr, reason):
+                            if self.save_buy_record(ticker, stock_name, buy_price, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
                                 st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
                                 # 세션 상태 초기화
                                 del st.session_state.searched_ticker
@@ -1238,6 +1320,10 @@ asyncio.run(run())
                                     del st.session_state.searched_macd
                                 if 'searched_adr' in st.session_state:
                                     del st.session_state.searched_adr
+                                if 'searched_kospi_adr' in st.session_state:
+                                    del st.session_state.searched_kospi_adr
+                                if 'searched_kosdaq_adr' in st.session_state:
+                                    del st.session_state.searched_kosdaq_adr
                                 st.rerun()
 
                 st.markdown("---")
@@ -1306,13 +1392,14 @@ asyncio.run(run())
                                     st.markdown(f"**RSI:** {pos.get('rsi', 0):.2f}" if pos.get('rsi') else "**RSI:** N/A")
                                     st.markdown(f"**MACD:** {pos.get('macd', 0):.2f}" if pos.get('macd') else "**MACD:** N/A")
 
-                                with col3:
-                                    st.markdown("&nbsp;")
-                                    st.markdown(f"**ADR:** {pos.get('adr', 0):.2f}" if pos.get('adr') else "**ADR:** N/A")
-
                                     # 평가금액 계산
                                     total_value = pos['current_price'] * pos.get('quantity', 1)
                                     st.markdown(f"**평가금액:** {total_value:,.0f}원")
+
+                                with col3:
+                                    st.markdown(f"**종목 ADR:** {pos.get('adr', 0):.2f}" if pos.get('adr') else "**종목 ADR:** N/A")
+                                    st.markdown(f"**코스피 ADR:** {pos.get('market_kospi_adr', 0):.2f}" if pos.get('market_kospi_adr') else "**코스피 ADR:** N/A")
+                                    st.markdown(f"**코스닥 ADR:** {pos.get('market_kosdaq_adr', 0):.2f}" if pos.get('market_kosdaq_adr') else "**코스닥 ADR:** N/A")
 
                                 # 시나리오 정보
                                 if pos.get('scenario'):
