@@ -238,6 +238,63 @@ class TradingJournalDB:
             logger.error(f"매매 내역 조회 실패: {str(e)}")
             return []
 
+    def add_position(
+        self,
+        ticker: str,
+        company_name: str,
+        buy_price: float,
+        buy_date: str,
+        quantity: int = 1,
+        rsi: Optional[float] = None,
+        macd: Optional[float] = None,
+        adr: Optional[float] = None,
+        scenario: Optional[str] = None
+    ) -> bool:
+        """
+        매수 기록 추가
+
+        Args:
+            ticker: 종목 코드
+            company_name: 종목명
+            buy_price: 매수가
+            buy_date: 매수일 (YYYY-MM-DD HH:MM:SS 형식)
+            quantity: 수량 (기본값 1)
+            rsi: RSI 지표
+            macd: MACD 지표
+            adr: ADR 지표
+            scenario: 시나리오 정보 (JSON 문자열)
+
+        Returns:
+            성공 여부
+        """
+        try:
+            self.cursor.execute("""
+                INSERT OR REPLACE INTO stock_holdings
+                (ticker, company_name, buy_price, buy_date, quantity, current_price,
+                 rsi, macd, adr, scenario, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ticker,
+                company_name,
+                buy_price,
+                buy_date,
+                quantity,
+                buy_price,  # 초기 현재가는 매수가와 동일
+                rsi,
+                macd,
+                adr,
+                scenario,
+                buy_date
+            ))
+
+            self.conn.commit()
+            logger.info(f"매수 기록 저장 완료: {company_name}({ticker}) {quantity}주")
+            return True
+
+        except Exception as e:
+            logger.error(f"매수 기록 저장 실패: {str(e)}")
+            return False
+
     def get_statistics(self) -> Dict[str, Any]:
         """
         전체 매매 통계 조회

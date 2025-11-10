@@ -1044,62 +1044,33 @@ asyncio.run(run())
     def save_buy_record(self, ticker, company_name, buy_price, quantity, rsi, macd, adr, reason):
         """매수 기록 저장"""
         try:
-            import sqlite3
-            db_path = project_root + "/stock_tracking_db.sqlite"
+            # 데이터베이스 경로를 project_root로 명시
+            db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
 
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
+            # TradingJournalDB를 사용하여 저장
+            with TradingJournalDB(db_path) as db:
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 테이블 생성 (존재하지 않는 경우)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS stock_holdings (
-                    ticker TEXT PRIMARY KEY,
-                    company_name TEXT NOT NULL,
-                    buy_price REAL NOT NULL,
-                    buy_date TEXT NOT NULL,
-                    quantity INTEGER DEFAULT 1,
-                    current_price REAL,
-                    last_updated TEXT,
-                    scenario TEXT,
-                    rsi REAL,
-                    macd REAL,
-                    adr REAL
+                scenario = {
+                    "rationale": reason if reason else "미입력",
+                    "investment_period": "중기",
+                    "sector": "기타"
+                }
+
+                success = db.add_position(
+                    ticker=ticker,
+                    company_name=company_name,
+                    buy_price=buy_price,
+                    buy_date=now,
+                    quantity=quantity,
+                    rsi=rsi,
+                    macd=macd,
+                    adr=adr,
+                    scenario=json.dumps(scenario, ensure_ascii=False)
                 )
-            """)
 
-            # 테이블 생성 후 commit
-            conn.commit()
+                return success
 
-            # quantity 컬럼이 없는 경우 추가 (기존 테이블 대응)
-            try:
-                cursor.execute("ALTER TABLE stock_holdings ADD COLUMN quantity INTEGER DEFAULT 1")
-                conn.commit()
-            except:
-                pass  # 이미 컬럼이 있으면 무시
-
-            # stock_holdings 테이블에 INSERT
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            scenario = {
-                "rationale": reason if reason else "미입력",
-                "investment_period": "중기",
-                "sector": "기타"
-            }
-
-            cursor.execute("""
-                INSERT OR REPLACE INTO stock_holdings
-                (ticker, company_name, buy_price, buy_date, quantity, current_price,
-                 rsi, macd, adr, scenario, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                ticker, company_name, buy_price, now, quantity, buy_price,
-                rsi, macd, adr, json.dumps(scenario, ensure_ascii=False), now
-            ))
-
-            conn.commit()
-            conn.close()
-
-            return True
         except Exception as e:
             st.error(f"저장 실패: {str(e)}")
             import traceback
@@ -1283,7 +1254,9 @@ asyncio.run(run())
             st.markdown("### 💼 보유 종목 조회")
 
             try:
-                with TradingJournalDB() as db:
+                # 데이터베이스 경로를 project_root로 명시
+                db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+                with TradingJournalDB(db_path) as db:
                     positions = db.get_open_positions()
 
                     if not positions:
@@ -1384,7 +1357,9 @@ asyncio.run(run())
             return
 
         try:
-            with TradingJournalDB() as db:
+            # 데이터베이스 경로를 project_root로 명시
+            db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+            with TradingJournalDB(db_path) as db:
                 # 전체 매도 기록 조회
                 history = db.get_trading_history(limit=9999)
 
