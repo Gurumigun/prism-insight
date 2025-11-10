@@ -1067,6 +1067,16 @@ asyncio.run(run())
                 )
             """)
 
+            # 테이블 생성 후 commit
+            conn.commit()
+
+            # quantity 컬럼이 없는 경우 추가 (기존 테이블 대응)
+            try:
+                cursor.execute("ALTER TABLE stock_holdings ADD COLUMN quantity INTEGER DEFAULT 1")
+                conn.commit()
+            except:
+                pass  # 이미 컬럼이 있으면 무시
+
             # stock_holdings 테이블에 INSERT
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
