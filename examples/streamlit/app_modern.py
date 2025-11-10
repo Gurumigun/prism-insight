@@ -6,16 +6,39 @@ import markdown
 import base64
 import sys
 import os
+import pandas as pd
+import json
+import plotly.graph_objects as go
 
 # 현재 파일의 디렉토리를 Python path에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
-from email_sender import send_email
 from queue import Queue
 from threading import Thread
 import uuid
+
+# email_sender import (optional)
+try:
+    from email_sender import send_email
+except ImportError:
+    send_email = None
+
+# TradingJournalDB import
+try:
+    from trading_journal_db import TradingJournalDB
+except ImportError:
+    TradingJournalDB = None
+
+# pykrx import
+try:
+    from pykrx import stock
+except ImportError:
+    stock = None
 
 # 보고서 저장 디렉토리 설정
 REPORTS_DIR = Path(__file__).parent.parent.parent / "reports"
@@ -545,8 +568,11 @@ class ModernStockAnalysisApp:
 
             if is_cached:
                 # 캐시된 보고서가 있으면 바로 이메일 전송
-                send_email(request.email, cached_content)
-                request.result = f"캐시된 분석 보고서가 이메일로 전송되었습니다. (파일: {cached_file.name})"
+                if send_email:
+                    send_email(request.email, cached_content)
+                    request.result = f"캐시된 분석 보고서가 이메일로 전송되었습니다. (파일: {cached_file.name})"
+                else:
+                    request.result = f"캐시된 분석 보고서를 찾았습니다. (파일: {cached_file.name})"
             else:
                 # 별도 프로세스로 분석 실행
                 import subprocess
@@ -933,6 +959,438 @@ asyncio.run(run())
         filename = f"{file_path.stem}.{extension}"
         return f'<a href="data:file/{extension};base64,{b64}" download="{filename}">💾 {extension.upper()} 형식으로 다운로드</a>'
 
+    def get_stock_info(self, ticker):
+        """종목 정보 조회"""
+        if stock is None:
+            return None, None, None
+
+        try:
+            from datetime import timedelta
+
+            # 종목명 조회
+            stock_name = stock.get_market_ticker_name(ticker)
+            if not stock_name:
+                return None, None, None
+
+            # 현재가 조회 (최근 영업일)
+            today = datetime.now()
+            end_date = today.strftime("%Y%m%d")
+            start_date = (today - timedelta(days=7)).strftime("%Y%m%d")
+
+            df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+            if df.empty:
+                return stock_name, None, None
+
+            current_price = df.iloc[-1]['종가']
+
+            # 차트 데이터 (최근 60일)
+            chart_start = (today - timedelta(days=90)).strftime("%Y%m%d")
+            chart_df = stock.get_market_ohlcv_by_date(chart_start, end_date, ticker)
+
+            return stock_name, current_price, chart_df
+
+        except Exception as e:
+            st.error(f"종목 정보 조회 실패: {str(e)}")
+            return None, None, None
+
+    def create_stock_chart(self, df, stock_name):
+        """주가 차트 생성"""
+        if df is None or df.empty:
+            return None
+
+        fig = go.Figure()
+
+        # 캔들스틱 차트
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df['시가'],
+            high=df['고가'],
+            low=df['저가'],
+            close=df['종가'],
+            name=stock_name
+        ))
+
+        # 거래량 추가
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=df['거래량'],
+            name='거래량',
+            yaxis='y2',
+            opacity=0.3
+        ))
+
+        fig.update_layout(
+            title=f"{stock_name} 주가 차트",
+            yaxis_title="주가 (원)",
+            yaxis2=dict(
+                title="거래량",
+                overlaying='y',
+                side='right'
+            ),
+            xaxis_rangeslider_visible=False,
+            height=400
+        )
+
+        return fig
+
+    def save_buy_record(self, ticker, company_name, buy_price, target_price, stop_loss, reason):
+        """매수 기록 저장"""
+        try:
+            import sqlite3
+            db_path = project_root + "/stock_tracking_db.sqlite"
+
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            # stock_holdings 테이블에 INSERT
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            scenario = {
+                "rationale": reason if reason else "미입력",
+                "investment_period": "중기",
+                "sector": "기타"
+            }
+
+            cursor.execute("""
+                INSERT INTO stock_holdings
+                (ticker, company_name, buy_price, buy_date, current_price,
+                 target_price, stop_loss, scenario, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ticker, company_name, buy_price, now, buy_price,
+                target_price, stop_loss, json.dumps(scenario, ensure_ascii=False), now
+            ))
+
+            conn.commit()
+            conn.close()
+
+            return True
+        except Exception as e:
+            st.error(f"저장 실패: {str(e)}")
+            return False
+
+    def render_buy_records(self):
+        """매수 기록 화면"""
+        self.add_app_header()
+
+        st.markdown("## 📊 매수 기록 관리")
+
+        if stock is None:
+            st.warning("pykrx 라이브러리가 설치되지 않았습니다. `pip install pykrx`를 실행해주세요.")
+
+        if TradingJournalDB is None:
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다.")
+            return
+
+        # 탭 생성
+        tab1, tab2 = st.tabs(["📝 매수 기록 등록", "💼 보유 종목 조회"])
+
+        # 탭 1: 매수 기록 등록
+        with tab1:
+            st.markdown("### 📝 새 매수 기록 등록")
+            st.markdown("종목코드를 입력하면 자동으로 종목 정보를 가져옵니다.")
+
+            # 종목코드 입력
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                ticker_input = st.text_input("종목코드 (6자리)", placeholder="예: 005930", key="ticker_input")
+            with col2:
+                search_button = st.button("🔍 종목 조회", type="primary", use_container_width=True)
+
+            # 종목 정보 조회 및 표시
+            if search_button and ticker_input:
+                if not re.match(r'^\d{6}$', ticker_input):
+                    st.error("올바른 종목코드를 입력해주세요 (6자리 숫자)")
+                else:
+                    with st.spinner("종목 정보를 조회하고 있습니다..."):
+                        stock_name, current_price, chart_df = self.get_stock_info(ticker_input)
+
+                        if stock_name is None:
+                            st.error("종목을 찾을 수 없습니다. 종목코드를 확인해주세요.")
+                        else:
+                            # 세션 상태에 저장
+                            st.session_state.searched_ticker = ticker_input
+                            st.session_state.searched_name = stock_name
+                            st.session_state.searched_price = current_price
+                            st.session_state.searched_chart = chart_df
+
+            # 종목 정보가 있으면 표시
+            if hasattr(st.session_state, 'searched_ticker'):
+                ticker = st.session_state.searched_ticker
+                stock_name = st.session_state.searched_name
+                current_price = st.session_state.searched_price
+                chart_df = st.session_state.searched_chart
+
+                st.success(f"✅ 종목 조회 완료: {stock_name} ({ticker})")
+
+                # 종목 정보 카드
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("종목명", stock_name)
+                with col2:
+                    st.metric("종목코드", ticker)
+                with col3:
+                    if current_price:
+                        st.metric("현재가", f"{current_price:,.0f}원")
+                    else:
+                        st.metric("현재가", "조회 실패")
+
+                # 차트 표시
+                if chart_df is not None and not chart_df.empty:
+                    st.markdown("#### 📈 주가 차트 (최근 60일)")
+                    fig = self.create_stock_chart(chart_df, stock_name)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+
+                st.markdown("---")
+
+                # 매수 정보 입력 폼
+                st.markdown("### 💰 매수 정보 입력")
+
+                with st.form("buy_record_form"):
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        buy_price = st.number_input(
+                            "매수가 (원) *",
+                            min_value=1,
+                            value=int(current_price) if current_price else 0,
+                            step=100,
+                            help="실제 매수한 가격을 입력해주세요"
+                        )
+
+                        target_price = st.number_input(
+                            "목표가 (원)",
+                            min_value=1,
+                            value=int(buy_price * 1.1) if buy_price > 0 else 0,
+                            step=100,
+                            help="매도 목표가격 (기본: 매수가의 110%)"
+                        )
+
+                    with col2:
+                        buy_date = st.date_input(
+                            "매수일 *",
+                            value=datetime.now(),
+                            max_value=datetime.now()
+                        )
+
+                        stop_loss = st.number_input(
+                            "손절가 (원)",
+                            min_value=1,
+                            value=int(buy_price * 0.95) if buy_price > 0 else 0,
+                            step=100,
+                            help="손절가격 (기본: 매수가의 95%)"
+                        )
+
+                    # 매수 이유 (선택사항)
+                    reason = st.text_area(
+                        "매수 이유 (선택사항)",
+                        placeholder="이 종목을 매수한 이유를 간단히 작성해주세요...",
+                        height=100
+                    )
+
+                    # 제출 버튼
+                    col1, col2, col3 = st.columns([1, 1, 1])
+                    with col2:
+                        submitted = st.form_submit_button("💾 매수 기록 저장", use_container_width=True, type="primary")
+
+                    if submitted:
+                        if buy_price <= 0:
+                            st.error("매수가를 입력해주세요.")
+                        else:
+                            # 저장
+                            if self.save_buy_record(ticker, stock_name, buy_price, target_price, stop_loss, reason):
+                                st.success(f"✅ {stock_name}({ticker}) 매수 기록이 저장되었습니다!")
+                                # 세션 상태 초기화
+                                del st.session_state.searched_ticker
+                                del st.session_state.searched_name
+                                del st.session_state.searched_price
+                                del st.session_state.searched_chart
+                                st.rerun()
+
+        # 탭 2: 보유 종목 조회
+        with tab2:
+            st.markdown("### 💼 보유 종목 조회")
+
+            try:
+                with TradingJournalDB() as db:
+                    positions = db.get_open_positions()
+
+                    if not positions:
+                        st.info("📭 현재 보유 중인 종목이 없습니다.")
+                    else:
+                        # 통계 정보 표시
+                        col1, col2, col3, col4 = st.columns(4)
+
+                        with col1:
+                            st.metric("보유 종목 수", f"{len(positions)}개")
+                        with col2:
+                            avg_profit = sum(p['profit_rate'] for p in positions) / len(positions) if positions else 0
+                            st.metric("평균 수익률", f"{avg_profit:+.2f}%")
+                        with col3:
+                            profitable = sum(1 for p in positions if p['profit_rate'] > 0)
+                            st.metric("수익 종목", f"{profitable}개")
+                        with col4:
+                            losing = sum(1 for p in positions if p['profit_rate'] < 0)
+                            st.metric("손실 종목", f"{losing}개")
+
+                        st.markdown("---")
+
+                        # 보유 종목 목록 표시
+                        for idx, pos in enumerate(positions, 1):
+                            profit_rate = pos['profit_rate']
+                            if profit_rate > 0:
+                                color = "green"
+                                emoji = "🔺"
+                            elif profit_rate < 0:
+                                color = "red"
+                                emoji = "🔻"
+                            else:
+                                color = "gray"
+                                emoji = "➖"
+
+                            with st.expander(f"{emoji} {pos['company_name']} ({pos['ticker']}) - 수익률: {profit_rate:+.2f}%", expanded=(idx <= 3)):
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    st.markdown(f"**매수가:** {pos['buy_price']:,.0f}원")
+                                    st.markdown(f"**현재가:** {pos['current_price']:,.0f}원")
+                                    st.markdown(f"**목표가:** {pos.get('target_price', 0):,.0f}원")
+
+                                with col2:
+                                    st.markdown(f"**손절가:** {pos.get('stop_loss', 0):,.0f}원")
+                                    st.markdown(f"**매수일:** {pos['buy_date']}")
+                                    st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+
+                                # 시나리오 정보
+                                if pos.get('scenario'):
+                                    try:
+                                        scenario = json.loads(pos['scenario']) if isinstance(pos['scenario'], str) else pos['scenario']
+                                        if scenario.get('rationale') != "미입력":
+                                            st.markdown("**투자 근거:**")
+                                            st.markdown(f"- {scenario.get('rationale', '정보 없음')}")
+                                    except:
+                                        pass
+
+                        # 데이터프레임 표시
+                        st.markdown("### 📋 요약 테이블")
+                        df_data = []
+                        for pos in positions:
+                            df_data.append({
+                                '종목명': pos['company_name'],
+                                '종목코드': pos['ticker'],
+                                '매수가': f"{pos['buy_price']:,.0f}원",
+                                '현재가': f"{pos['current_price']:,.0f}원",
+                                '수익률': f"{pos['profit_rate']:+.2f}%",
+                                '매수일': pos['buy_date'].split()[0]
+                            })
+
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+
+            except Exception as e:
+                st.error(f"보유 종목 조회 중 오류가 발생했습니다: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+
+    def render_sell_records(self):
+        """매도 기록 화면"""
+        self.add_app_header()
+
+        st.markdown("## 📉 매도 기록")
+        st.markdown("과거 매도한 종목의 거래 내역을 확인할 수 있습니다.")
+
+        if TradingJournalDB is None:
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다. trading_journal_db.py 파일이 존재하는지 확인해주세요.")
+            return
+
+        try:
+            with TradingJournalDB() as db:
+                # 조회 건수 선택
+                limit_options = [10, 20, 50, 100]
+                limit = st.selectbox("조회 건수", limit_options, index=0)
+
+                history = db.get_trading_history(limit=limit)
+
+                if not history:
+                    st.info("📭 매도 기록이 없습니다.")
+                    return
+
+                # 통계 정보
+                stats = db.get_statistics()
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("총 거래", f"{stats.get('total_trades', 0)}건")
+                with col2:
+                    st.metric("수익 거래", f"{stats.get('profitable_trades', 0)}건",
+                             delta=f"{stats.get('win_rate', 0):.1f}% 승률")
+                with col3:
+                    st.metric("손실 거래", f"{stats.get('losing_trades', 0)}건")
+                with col4:
+                    st.metric("평균 수익률", f"{stats.get('avg_profit_rate', 0):+.2f}%")
+
+                st.markdown("---")
+
+                # 매도 내역 목록
+                st.markdown("### 💰 매도 내역")
+
+                for idx, trade in enumerate(history, 1):
+                    profit_rate = trade['profit_rate']
+                    if profit_rate > 0:
+                        color = "green"
+                        emoji = "✅"
+                        result = "수익"
+                    else:
+                        color = "red"
+                        emoji = "❌"
+                        result = "손실"
+
+                    with st.expander(f"{emoji} {trade['company_name']} ({trade['ticker']}) - {result}: {profit_rate:+.2f}%", expanded=(idx <= 5)):
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.markdown(f"**매수가:** {trade['buy_price']:,.0f}원")
+                            st.markdown(f"**매도가:** {trade['sell_price']:,.0f}원")
+                            st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+
+                        with col2:
+                            st.markdown(f"**매수일:** {trade['buy_date']}")
+                            st.markdown(f"**매도일:** {trade['sell_date']}")
+                            st.markdown(f"**보유기간:** {trade['holding_days']}일")
+
+                        # 시나리오 정보
+                        if trade.get('scenario'):
+                            try:
+                                scenario = json.loads(trade['scenario']) if isinstance(trade['scenario'], str) else trade['scenario']
+                                st.markdown("**투자 정보:**")
+                                st.markdown(f"- 투자 기간: {scenario.get('investment_period', '중기')}")
+                                st.markdown(f"- 산업군: {scenario.get('sector', '알 수 없음')}")
+                            except:
+                                pass
+
+                # 데이터프레임으로도 표시
+                st.markdown("### 📋 거래 내역 테이블")
+                df_data = []
+                for trade in history:
+                    df_data.append({
+                        '종목명': trade['company_name'],
+                        '종목코드': trade['ticker'],
+                        '매수가': f"{trade['buy_price']:,.0f}원",
+                        '매도가': f"{trade['sell_price']:,.0f}원",
+                        '수익률': f"{trade['profit_rate']:+.2f}%",
+                        '보유기간': f"{trade['holding_days']}일",
+                        '매도일': trade['sell_date'].split()[0]
+                    })
+
+                df = pd.DataFrame(df_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            st.error(f"매도 기록 조회 중 오류가 발생했습니다: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
     def main(self):
         """메인 애플리케이션 실행"""
         # 사이드바 디자인 개선
@@ -942,32 +1400,38 @@ asyncio.run(run())
             <div class="sidebar-title">analysis.stocksimulation.kr</div>
         </div>
         """, unsafe_allow_html=True)
-        
+
         st.sidebar.title("메뉴")
-        
+
         # 모던한 사이드바 메뉴
         menu_options = {
             "분석 요청": "📝",
-            "보고서 보기": "📚"
+            "보고서 보기": "📚",
+            "매수 기록": "💰",
+            "매도 기록": "📉"
         }
-        
+
         menu = st.sidebar.radio(
             "선택",
             list(menu_options.keys()),
             format_func=lambda x: f"{menu_options[x]} {x}"
         )
-        
+
         # 앱 버전 및 소셜 링크
         st.sidebar.markdown("---")
         st.sidebar.markdown("#### 서비스 정보")
-        st.sidebar.markdown("버전: v1.0.2")
+        st.sidebar.markdown("버전: v1.0.3")
         st.sidebar.markdown("© 2025 https://analysis.stocksimulation.kr")
-        
+
         # 메인 콘텐츠 렌더링
         if menu == "분석 요청":
             self.render_modern_analysis_form()
-        else:
+        elif menu == "보고서 보기":
             self.render_modern_report_viewer()
+        elif menu == "매수 기록":
+            self.render_buy_records()
+        elif menu == "매도 기록":
+            self.render_sell_records()
 
 if __name__ == "__main__":
     app = ModernStockAnalysisApp()
