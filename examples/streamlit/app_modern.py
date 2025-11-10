@@ -1041,7 +1041,7 @@ asyncio.run(run())
 
         return fig
 
-    def save_buy_record(self, ticker, company_name, buy_price, rsi, macd, adr, reason):
+    def save_buy_record(self, ticker, company_name, buy_price, quantity, rsi, macd, adr, reason):
         """매수 기록 저장"""
         try:
             import sqlite3
@@ -1057,6 +1057,7 @@ asyncio.run(run())
                     company_name TEXT NOT NULL,
                     buy_price REAL NOT NULL,
                     buy_date TEXT NOT NULL,
+                    quantity INTEGER DEFAULT 1,
                     current_price REAL,
                     last_updated TEXT,
                     scenario TEXT,
@@ -1077,11 +1078,11 @@ asyncio.run(run())
 
             cursor.execute("""
                 INSERT OR REPLACE INTO stock_holdings
-                (ticker, company_name, buy_price, buy_date, current_price,
+                (ticker, company_name, buy_price, buy_date, quantity, current_price,
                  rsi, macd, adr, scenario, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                ticker, company_name, buy_price, now, buy_price,
+                ticker, company_name, buy_price, now, quantity, buy_price,
                 rsi, macd, adr, json.dumps(scenario, ensure_ascii=False), now
             ))
 
@@ -1184,13 +1185,12 @@ asyncio.run(run())
                             help="실제 매수한 가격을 입력해주세요"
                         )
 
-                        rsi = st.number_input(
-                            "RSI",
-                            min_value=0.0,
-                            max_value=100.0,
-                            value=float(rsi_value) if rsi_value else 50.0,
-                            step=0.01,
-                            help="상대강도지수 (0~100)"
+                        quantity = st.number_input(
+                            "매수 수량 *",
+                            min_value=1,
+                            value=1,
+                            step=1,
+                            help="매수한 주식 수량"
                         )
 
                     with col2:
@@ -1200,16 +1200,22 @@ asyncio.run(run())
                             max_value=datetime.now()
                         )
 
+                        rsi = st.number_input(
+                            "RSI",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=float(rsi_value) if rsi_value else 50.0,
+                            step=0.01,
+                            help="상대강도지수 (0~100)"
+                        )
+
+                    with col3:
                         macd = st.number_input(
                             "MACD",
                             value=float(macd_value) if macd_value else 0.0,
                             step=0.01,
                             help="이동평균수렴확산지수"
                         )
-
-                    with col3:
-                        st.markdown("&nbsp;")  # 공백
-                        st.markdown("&nbsp;")
 
                         adr = st.number_input(
                             "ADR (평균 일일 변동폭)",
@@ -1234,10 +1240,12 @@ asyncio.run(run())
                     if submitted:
                         if buy_price <= 0:
                             st.error("매수가를 입력해주세요.")
+                        elif quantity <= 0:
+                            st.error("매수 수량을 입력해주세요.")
                         else:
                             # 저장
-                            if self.save_buy_record(ticker, stock_name, buy_price, rsi, macd, adr, reason):
-                                st.success(f"✅ {stock_name}({ticker}) 매수 기록이 저장되었습니다!")
+                            if self.save_buy_record(ticker, stock_name, buy_price, quantity, rsi, macd, adr, reason):
+                                st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
                                 # 세션 상태 초기화
                                 del st.session_state.searched_ticker
                                 del st.session_state.searched_name
@@ -1307,6 +1315,7 @@ asyncio.run(run())
                                 with col1:
                                     st.markdown(f"**매수가:** {pos['buy_price']:,.0f}원")
                                     st.markdown(f"**현재가:** {pos['current_price']:,.0f}원")
+                                    st.markdown(f"**보유 수량:** {pos.get('quantity', 1)}주")
                                     st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
 
                                 with col2:
@@ -1317,6 +1326,10 @@ asyncio.run(run())
                                 with col3:
                                     st.markdown("&nbsp;")
                                     st.markdown(f"**ADR:** {pos.get('adr', 0):.2f}" if pos.get('adr') else "**ADR:** N/A")
+
+                                    # 평가금액 계산
+                                    total_value = pos['current_price'] * pos.get('quantity', 1)
+                                    st.markdown(f"**평가금액:** {total_value:,.0f}원")
 
                                 # 시나리오 정보
                                 if pos.get('scenario'):
