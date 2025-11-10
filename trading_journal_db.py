@@ -29,15 +29,56 @@ class TradingJournalDB:
         self._initialize_db()
 
     def _initialize_db(self):
-        """데이터베이스 연결 초기화"""
+        """데이터베이스 연결 초기화 및 테이블 생성"""
         try:
             self.conn = sqlite3.connect(self.db_path)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()
+
+            # 테이블 자동 생성
+            self._create_tables()
+
             logger.info(f"데이터베이스 연결 성공: {self.db_path}")
         except Exception as e:
             logger.error(f"데이터베이스 연결 실패: {str(e)}")
             raise
+
+    def _create_tables(self):
+        """필요한 테이블들을 자동으로 생성"""
+        # stock_holdings 테이블 생성
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_holdings (
+                ticker TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                buy_price REAL NOT NULL,
+                buy_date TEXT NOT NULL,
+                current_price REAL,
+                last_updated TEXT,
+                scenario TEXT,
+                rsi REAL,
+                macd REAL,
+                adr REAL
+            )
+        """)
+
+        # trading_history 테이블 생성
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trading_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                company_name TEXT NOT NULL,
+                buy_price REAL NOT NULL,
+                buy_date TEXT NOT NULL,
+                sell_price REAL NOT NULL,
+                sell_date TEXT NOT NULL,
+                profit_rate REAL NOT NULL,
+                holding_days INTEGER NOT NULL,
+                scenario TEXT
+            )
+        """)
+
+        self.conn.commit()
+        logger.info("데이터베이스 테이블 생성 완료")
 
     def get_open_positions(self) -> List[Dict[str, Any]]:
         """
@@ -67,8 +108,9 @@ class TradingJournalDB:
                     buy_price,
                     buy_date,
                     current_price,
-                    target_price,
-                    stop_loss,
+                    rsi,
+                    macd,
+                    adr,
                     scenario,
                     last_updated
                 FROM stock_holdings

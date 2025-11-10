@@ -924,10 +924,48 @@ asyncio.run(run())
         filename = f"{file_path.stem}.{extension}"
         return f'<a href="data:file/{extension};base64,{b64}" download="{filename}">💾 {extension.upper()} 형식으로 다운로드</a>'
 
+    def calculate_rsi(self, df, period=14):
+        """RSI 계산"""
+        try:
+            close = df['종가']
+            delta = close.diff()
+
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+
+            return round(rsi.iloc[-1], 2) if not rsi.empty else None
+        except:
+            return None
+
+    def calculate_macd(self, df):
+        """MACD 계산"""
+        try:
+            close = df['종가']
+            exp1 = close.ewm(span=12, adjust=False).mean()
+            exp2 = close.ewm(span=26, adjust=False).mean()
+            macd = exp1 - exp2
+
+            return round(macd.iloc[-1], 2) if not macd.empty else None
+        except:
+            return None
+
+    def calculate_adr(self, df, period=20):
+        """ADR (Average Daily Range) 계산"""
+        try:
+            high_low = df['고가'] - df['저가']
+            adr = high_low.rolling(window=period).mean()
+
+            return round(adr.iloc[-1], 2) if not adr.empty else None
+        except:
+            return None
+
     def get_stock_info(self, ticker):
-        """종목 정보 조회"""
+        """종목 정보 조회 및 기술적 지표 계산"""
         if stock is None:
-            return None, None, None
+            return None, None, None, None, None, None
 
         try:
             from datetime import timedelta
@@ -935,7 +973,7 @@ asyncio.run(run())
             # 종목명 조회
             stock_name = stock.get_market_ticker_name(ticker)
             if not stock_name:
-                return None, None, None
+                return None, None, None, None, None, None
 
             # 현재가 조회 (최근 영업일)
             today = datetime.now()
@@ -944,19 +982,24 @@ asyncio.run(run())
 
             df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
             if df.empty:
-                return stock_name, None, None
+                return stock_name, None, None, None, None, None
 
             current_price = df.iloc[-1]['종가']
 
-            # 차트 데이터 (최근 60일)
-            chart_start = (today - timedelta(days=90)).strftime("%Y%m%d")
+            # 차트 데이터 (최근 100일 - 기술적 지표 계산을 위해 더 많은 데이터 필요)
+            chart_start = (today - timedelta(days=150)).strftime("%Y%m%d")
             chart_df = stock.get_market_ohlcv_by_date(chart_start, end_date, ticker)
 
-            return stock_name, current_price, chart_df
+            # 기술적 지표 계산
+            rsi = self.calculate_rsi(chart_df)
+            macd = self.calculate_macd(chart_df)
+            adr = self.calculate_adr(chart_df)
+
+            return stock_name, current_price, chart_df, rsi, macd, adr
 
         except Exception as e:
             st.error(f"종목 정보 조회 실패: {str(e)}")
-            return None, None, None
+            return None, None, None, None, None, None
 
     def create_stock_chart(self, df, stock_name):
         """주가 차트 생성"""
@@ -998,7 +1041,7 @@ asyncio.run(run())
 
         return fig
 
-    def save_buy_record(self, ticker, company_name, buy_price, target_price, stop_loss, reason):
+    def save_buy_record(self, ticker, company_name, buy_price, rsi, macd, adr, reason):
         """매수 기록 저장"""
         try:
             import sqlite3
@@ -1017,13 +1060,13 @@ asyncio.run(run())
             }
 
             cursor.execute("""
-                INSERT INTO stock_holdings
+                INSERT OR REPLACE INTO stock_holdings
                 (ticker, company_name, buy_price, buy_date, current_price,
-                 target_price, stop_loss, scenario, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rsi, macd, adr, scenario, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ticker, company_name, buy_price, now, buy_price,
-                target_price, stop_loss, json.dumps(scenario, ensure_ascii=False), now
+                rsi, macd, adr, json.dumps(scenario, ensure_ascii=False), now
             ))
 
             conn.commit()
@@ -1032,6 +1075,8 @@ asyncio.run(run())
             return True
         except Exception as e:
             st.error(f"저장 실패: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
             return False
 
     def render_buy_records(self):
@@ -1067,8 +1112,8 @@ asyncio.run(run())
                 if not re.match(r'^\d{6}$', ticker_input):
                     st.error("올바른 종목코드를 입력해주세요 (6자리 숫자)")
                 else:
-                    with st.spinner("종목 정보를 조회하고 있습니다..."):
-                        stock_name, current_price, chart_df = self.get_stock_info(ticker_input)
+                    with st.spinner("종목 정보 및 기술적 지표를 계산하고 있습니다..."):
+                        stock_name, current_price, chart_df, rsi, macd, adr = self.get_stock_info(ticker_input)
 
                         if stock_name is None:
                             st.error("종목을 찾을 수 없습니다. 종목코드를 확인해주세요.")
@@ -1078,6 +1123,9 @@ asyncio.run(run())
                             st.session_state.searched_name = stock_name
                             st.session_state.searched_price = current_price
                             st.session_state.searched_chart = chart_df
+                            st.session_state.searched_rsi = rsi
+                            st.session_state.searched_macd = macd
+                            st.session_state.searched_adr = adr
 
             # 종목 정보가 있으면 표시
             if hasattr(st.session_state, 'searched_ticker'):
@@ -1085,6 +1133,9 @@ asyncio.run(run())
                 stock_name = st.session_state.searched_name
                 current_price = st.session_state.searched_price
                 chart_df = st.session_state.searched_chart
+                rsi_value = st.session_state.get('searched_rsi', 0)
+                macd_value = st.session_state.get('searched_macd', 0)
+                adr_value = st.session_state.get('searched_adr', 0)
 
                 st.success(f"✅ 종목 조회 완료: {stock_name} ({ticker})")
 
@@ -1100,20 +1151,13 @@ asyncio.run(run())
                     else:
                         st.metric("현재가", "조회 실패")
 
-                # 차트 표시
-                if chart_df is not None and not chart_df.empty:
-                    st.markdown("#### 📈 주가 차트 (최근 60일)")
-                    fig = self.create_stock_chart(chart_df, stock_name)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-
                 st.markdown("---")
 
-                # 매수 정보 입력 폼
+                # 매수 정보 입력 폼 (차트 위로 이동)
                 st.markdown("### 💰 매수 정보 입력")
 
                 with st.form("buy_record_form"):
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
 
                     with col1:
                         buy_price = st.number_input(
@@ -1124,12 +1168,13 @@ asyncio.run(run())
                             help="실제 매수한 가격을 입력해주세요"
                         )
 
-                        target_price = st.number_input(
-                            "목표가 (원)",
-                            min_value=1,
-                            value=int(buy_price * 1.1) if buy_price > 0 else 0,
-                            step=100,
-                            help="매도 목표가격 (기본: 매수가의 110%)"
+                        rsi = st.number_input(
+                            "RSI",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=float(rsi_value) if rsi_value else 50.0,
+                            step=0.01,
+                            help="상대강도지수 (0~100)"
                         )
 
                     with col2:
@@ -1139,12 +1184,23 @@ asyncio.run(run())
                             max_value=datetime.now()
                         )
 
-                        stop_loss = st.number_input(
-                            "손절가 (원)",
-                            min_value=1,
-                            value=int(buy_price * 0.95) if buy_price > 0 else 0,
-                            step=100,
-                            help="손절가격 (기본: 매수가의 95%)"
+                        macd = st.number_input(
+                            "MACD",
+                            value=float(macd_value) if macd_value else 0.0,
+                            step=0.01,
+                            help="이동평균수렴확산지수"
+                        )
+
+                    with col3:
+                        st.markdown("&nbsp;")  # 공백
+                        st.markdown("&nbsp;")
+
+                        adr = st.number_input(
+                            "ADR (평균 일일 변동폭)",
+                            min_value=0.0,
+                            value=float(adr_value) if adr_value else 0.0,
+                            step=0.01,
+                            help="평균 일일 변동폭"
                         )
 
                     # 매수 이유 (선택사항)
@@ -1164,14 +1220,29 @@ asyncio.run(run())
                             st.error("매수가를 입력해주세요.")
                         else:
                             # 저장
-                            if self.save_buy_record(ticker, stock_name, buy_price, target_price, stop_loss, reason):
+                            if self.save_buy_record(ticker, stock_name, buy_price, rsi, macd, adr, reason):
                                 st.success(f"✅ {stock_name}({ticker}) 매수 기록이 저장되었습니다!")
                                 # 세션 상태 초기화
                                 del st.session_state.searched_ticker
                                 del st.session_state.searched_name
                                 del st.session_state.searched_price
                                 del st.session_state.searched_chart
+                                if 'searched_rsi' in st.session_state:
+                                    del st.session_state.searched_rsi
+                                if 'searched_macd' in st.session_state:
+                                    del st.session_state.searched_macd
+                                if 'searched_adr' in st.session_state:
+                                    del st.session_state.searched_adr
                                 st.rerun()
+
+                st.markdown("---")
+
+                # 차트 표시 (매수 정보 입력 아래로 이동)
+                if chart_df is not None and not chart_df.empty:
+                    st.markdown("#### 📈 주가 차트 (최근 100일)")
+                    fig = self.create_stock_chart(chart_df, stock_name)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
 
         # 탭 2: 보유 종목 조회
         with tab2:
@@ -1215,17 +1286,21 @@ asyncio.run(run())
                                 emoji = "➖"
 
                             with st.expander(f"{emoji} {pos['company_name']} ({pos['ticker']}) - 수익률: {profit_rate:+.2f}%", expanded=(idx <= 3)):
-                                col1, col2 = st.columns(2)
+                                col1, col2, col3 = st.columns(3)
 
                                 with col1:
                                     st.markdown(f"**매수가:** {pos['buy_price']:,.0f}원")
                                     st.markdown(f"**현재가:** {pos['current_price']:,.0f}원")
-                                    st.markdown(f"**목표가:** {pos.get('target_price', 0):,.0f}원")
+                                    st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
 
                                 with col2:
-                                    st.markdown(f"**손절가:** {pos.get('stop_loss', 0):,.0f}원")
                                     st.markdown(f"**매수일:** {pos['buy_date']}")
-                                    st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                                    st.markdown(f"**RSI:** {pos.get('rsi', 0):.2f}" if pos.get('rsi') else "**RSI:** N/A")
+                                    st.markdown(f"**MACD:** {pos.get('macd', 0):.2f}" if pos.get('macd') else "**MACD:** N/A")
+
+                                with col3:
+                                    st.markdown("&nbsp;")
+                                    st.markdown(f"**ADR:** {pos.get('adr', 0):.2f}" if pos.get('adr') else "**ADR:** N/A")
 
                                 # 시나리오 정보
                                 if pos.get('scenario'):
@@ -1271,11 +1346,8 @@ asyncio.run(run())
 
         try:
             with TradingJournalDB() as db:
-                # 조회 건수 선택
-                limit_options = [10, 20, 50, 100]
-                limit = st.selectbox("조회 건수", limit_options, index=0)
-
-                history = db.get_trading_history(limit=limit)
+                # 전체 매도 기록 조회
+                history = db.get_trading_history(limit=9999)
 
                 if not history:
                     st.info("📭 매도 기록이 없습니다.")
@@ -1297,8 +1369,31 @@ asyncio.run(run())
 
                 st.markdown("---")
 
-                # 매도 내역 목록
+                # 정렬 옵션
                 st.markdown("### 💰 매도 내역")
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    sort_option = st.selectbox(
+                        "정렬 기준",
+                        ["매도일 (오래된순)", "매도일 (최신순)", "수익률 (높은순)", "수익률 (낮은순)", "보유기간 (긴순)", "보유기간 (짧은순)"],
+                        index=0
+                    )
+
+                # 정렬 적용
+                if sort_option == "매도일 (오래된순)":
+                    history.sort(key=lambda x: x['sell_date'])
+                elif sort_option == "매도일 (최신순)":
+                    history.sort(key=lambda x: x['sell_date'], reverse=True)
+                elif sort_option == "수익률 (높은순)":
+                    history.sort(key=lambda x: x['profit_rate'], reverse=True)
+                elif sort_option == "수익률 (낮은순)":
+                    history.sort(key=lambda x: x['profit_rate'])
+                elif sort_option == "보유기간 (긴순)":
+                    history.sort(key=lambda x: x['holding_days'], reverse=True)
+                elif sort_option == "보유기간 (짧은순)":
+                    history.sort(key=lambda x: x['holding_days'])
+
+                st.markdown(f"**총 {len(history)}건의 거래 내역**")
 
                 for idx, trade in enumerate(history, 1):
                     profit_rate = trade['profit_rate']
