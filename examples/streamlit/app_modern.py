@@ -1050,6 +1050,22 @@ asyncio.run(run())
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
 
+            # 테이블 생성 (존재하지 않는 경우)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS stock_holdings (
+                    ticker TEXT PRIMARY KEY,
+                    company_name TEXT NOT NULL,
+                    buy_price REAL NOT NULL,
+                    buy_date TEXT NOT NULL,
+                    current_price REAL,
+                    last_updated TEXT,
+                    scenario TEXT,
+                    rsi REAL,
+                    macd REAL,
+                    adr REAL
+                )
+            """)
+
             # stock_holdings 테이블에 INSERT
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
