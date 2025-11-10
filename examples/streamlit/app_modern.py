@@ -1084,7 +1084,7 @@ asyncio.run(run())
 
         return fig
 
-    def save_buy_record(self, ticker, company_name, buy_price, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
+    def save_buy_record(self, ticker, company_name, buy_price, buy_date, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
         """매수 기록 저장"""
         try:
             # 데이터베이스 경로를 project_root로 명시
@@ -1092,7 +1092,11 @@ asyncio.run(run())
 
             # TradingJournalDB를 사용하여 저장
             with TradingJournalDB(db_path) as db:
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # buy_date가 date 객체인 경우 문자열로 변환
+                if hasattr(buy_date, 'strftime'):
+                    buy_date_str = buy_date.strftime("%Y-%m-%d")
+                else:
+                    buy_date_str = str(buy_date)
 
                 scenario = {
                     "rationale": reason if reason else "미입력",
@@ -1104,7 +1108,7 @@ asyncio.run(run())
                     ticker=ticker,
                     company_name=company_name,
                     buy_price=buy_price,
-                    buy_date=now,
+                    buy_date=buy_date_str,
                     quantity=quantity,
                     rsi=rsi,
                     macd=macd,
@@ -1372,8 +1376,8 @@ asyncio.run(run())
                         elif quantity <= 0:
                             st.error("❌ 매수 수량을 입력해주세요.")
                         else:
-                            # 저장
-                            if self.save_buy_record(ticker, stock_name, buy_price, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
+                            # 저장 - buy_date를 전달
+                            if self.save_buy_record(ticker, stock_name, buy_price, buy_date, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
                                 st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
                                 st.info("💡 새로운 종목을 등록하려면 위에서 종목코드를 다시 입력하세요.")
                                 # 세션 상태 초기화 - 모든 관련 상태 제거
@@ -1588,19 +1592,197 @@ asyncio.run(run())
                 st.code(traceback.format_exc())
 
     def render_sell_records(self):
-        """매도 기록 화면"""
+        """매도 기록 화면 (분할 뷰: 보유종목 목록 + 매도 폼)"""
         self.add_app_header()
 
         st.markdown("## 📉 매도 기록")
-        st.markdown("과거 매도한 종목의 거래 내역을 확인할 수 있습니다.")
+        st.markdown("보유 중인 종목을 선택하여 매도를 기록할 수 있습니다.")
 
         if TradingJournalDB is None:
-            st.error("TradingJournalDB 모듈을 불러올 수 없습니다. trading_journal_db.py 파일이 존재하는지 확인해주세요.")
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다.")
             return
+
+        if stock is None:
+            st.warning("pykrx 라이브러리가 설치되지 않았습니다. `pip install pykrx`를 실행해주세요.")
 
         try:
             # 데이터베이스 경로를 project_root로 명시
             db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+            # 화면 분할: 왼쪽(보유종목), 오른쪽(매도 폼)
+            col_left, col_right = st.columns([1, 1])
+
+            # 왼쪽: 보유 종목 목록
+            with col_left:
+                st.markdown("### 💼 보유 종목 목록")
+
+                with TradingJournalDB(db_path) as db:
+                    positions = db.get_open_positions()
+
+                    if not positions:
+                        st.info("📭 현재 보유 중인 종목이 없습니다.")
+                    else:
+                        st.markdown(f"**총 {len(positions)}건의 보유 내역**")
+
+                        # 선택 가능한 포지션 목록
+                        position_options = {}
+                        for pos in positions:
+                            profit_rate = pos['profit_rate']
+                            label = f"{pos['company_name']} ({pos['ticker']}) | {pos['quantity']}주 | 매수가: {pos['buy_price']:,.0f}원 | 수익률: {profit_rate:+.2f}%"
+                            position_options[label] = pos
+
+                        # 선택된 포지션 저장 (radio button)
+                        selected_label = st.radio(
+                            "매도할 종목을 선택하세요",
+                            list(position_options.keys()),
+                            key="selected_position_radio"
+                        )
+
+                        if selected_label:
+                            selected_position = position_options[selected_label]
+
+                            # 선택된 포지션 상세 정보 표시
+                            with st.expander("📊 선택된 종목 상세 정보", expanded=True):
+                                st.markdown(f"**종목명:** {selected_position['company_name']}")
+                                st.markdown(f"**종목코드:** {selected_position['ticker']}")
+                                st.markdown(f"**매수가:** {selected_position['buy_price']:,.0f}원")
+                                st.markdown(f"**현재가:** {selected_position['current_price']:,.0f}원")
+                                st.markdown(f"**보유 수량:** {selected_position['quantity']}주")
+                                st.markdown(f"**매수일:** {selected_position['buy_date']}")
+                                st.markdown(f"**수익률:** {selected_position['profit_rate']:+.2f}%")
+
+                                if selected_position.get('rsi'):
+                                    st.markdown(f"**RSI (매수 당시):** {selected_position['rsi']:.2f}")
+                                if selected_position.get('macd'):
+                                    st.markdown(f"**MACD (매수 당시):** {selected_position['macd']:.2f}")
+
+            # 오른쪽: 매도 폼
+            with col_right:
+                st.markdown("### 📝 매도 기록 입력")
+
+                if not positions:
+                    st.info("매도할 보유 종목이 없습니다.")
+                elif selected_label:
+                    selected_position = position_options[selected_label]
+
+                    # 현재가 조회 (최신 가격)
+                    with st.spinner("현재가를 조회하고 있습니다..."):
+                        if stock is not None:
+                            try:
+                                from datetime import datetime, timedelta
+                                end_date = datetime.now().strftime("%Y%m%d")
+                                start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+                                df = stock.get_market_ohlcv_by_date(start_date, end_date, selected_position['ticker'])
+                                if not df.empty:
+                                    latest_price = df['종가'].iloc[-1]
+                                    st.info(f"💹 최신 현재가: {latest_price:,.0f}원")
+                                else:
+                                    latest_price = selected_position['current_price']
+                            except:
+                                latest_price = selected_position['current_price']
+                        else:
+                            latest_price = selected_position['current_price']
+
+                    # 매도 폼
+                    with st.form("sell_record_form"):
+                        st.markdown("#### 💰 매도 정보")
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            sell_price = st.number_input(
+                                "💵 매도가 (원) *",
+                                min_value=1,
+                                value=int(latest_price),
+                                step=100,
+                                help="실제 매도한 가격을 입력해주세요"
+                            )
+                        with col2:
+                            sell_quantity = st.number_input(
+                                "📦 매도 수량 *",
+                                min_value=1,
+                                max_value=selected_position['quantity'],
+                                value=selected_position['quantity'],
+                                step=1,
+                                help=f"최대 {selected_position['quantity']}주까지 매도 가능"
+                            )
+
+                        sell_date = st.date_input(
+                            "📅 매도일",
+                            value=datetime.now(),
+                            max_value=datetime.now(),
+                            help="매도한 날짜를 선택하세요"
+                        )
+
+                        # 매도 사유
+                        sell_reason = st.text_area(
+                            "매도 사유 (선택사항)",
+                            placeholder="매도 이유를 간단히 작성해주세요...",
+                            height=100
+                        )
+
+                        # 예상 수익 계산
+                        buy_price = selected_position['buy_price']
+                        profit_per_share = sell_price - buy_price
+                        total_profit = profit_per_share * sell_quantity
+                        profit_rate = (profit_per_share / buy_price) * 100
+
+                        st.markdown("---")
+                        st.markdown("#### 📊 예상 수익 분석")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("주당 손익", f"{profit_per_share:+,.0f}원")
+                        with col2:
+                            st.metric("총 손익", f"{total_profit:+,.0f}원")
+                        with col3:
+                            st.metric("수익률", f"{profit_rate:+.2f}%")
+
+                        st.markdown("---")
+
+                        # 제출 버튼
+                        col1, col2, col3 = st.columns([1, 1, 1])
+                        with col2:
+                            submitted = st.form_submit_button("💾 매도 기록 저장", use_container_width=True, type="primary")
+
+                        if submitted:
+                            if sell_price <= 0:
+                                st.error("❌ 매도가를 입력해주세요.")
+                            elif sell_quantity <= 0:
+                                st.error("❌ 매도 수량을 입력해주세요.")
+                            elif sell_quantity > selected_position['quantity']:
+                                st.error(f"❌ 매도 수량은 최대 {selected_position['quantity']}주까지 가능합니다.")
+                            else:
+                                # 매도 처리
+                                sell_date_str = sell_date.strftime("%Y-%m-%d")
+
+                                with TradingJournalDB(db_path) as db:
+                                    success = db.sell_position(
+                                        position_id=selected_position['id'],
+                                        sell_quantity=sell_quantity,
+                                        sell_price=sell_price,
+                                        sell_date=sell_date_str
+                                    )
+
+                                    if success:
+                                        if sell_quantity == selected_position['quantity']:
+                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 전체 매도가 완료되었습니다!")
+                                        else:
+                                            remaining = selected_position['quantity'] - sell_quantity
+                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 부분 매도가 완료되었습니다! (잔여: {remaining}주)")
+
+                                        st.info(f"💰 실현 손익: {total_profit:+,.0f}원 ({profit_rate:+.2f}%)")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ 매도 처리 중 오류가 발생했습니다.")
+
+                else:
+                    st.info("왼쪽에서 매도할 종목을 선택해주세요.")
+
+            # 구분선
+            st.markdown("---")
+            st.markdown("## 📜 과거 매도 내역")
+
+            # 과거 매도 기록 조회
             with TradingJournalDB(db_path) as db:
                 # 전체 매도 기록 조회
                 history = db.get_trading_history(limit=9999)

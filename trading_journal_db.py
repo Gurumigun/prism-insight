@@ -505,6 +505,101 @@ class TradingJournalDB:
             logger.error(f"매수 기록 저장 실패: {str(e)}")
             return False
 
+    def sell_position(
+        self,
+        position_id: int,
+        sell_quantity: int,
+        sell_price: float,
+        sell_date: str
+    ) -> bool:
+        """
+        포지션 매도 (전체 또는 부분)
+
+        Args:
+            position_id: 매도할 포지션 ID
+            sell_quantity: 매도 수량
+            sell_price: 매도 가격
+            sell_date: 매도 날짜
+
+        Returns:
+            성공 여부
+        """
+        try:
+            # 해당 포지션 조회
+            self.cursor.execute("""
+                SELECT id, ticker, company_name, buy_price, buy_date, quantity,
+                       rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, scenario
+                FROM stock_holdings
+                WHERE id = ? AND (is_sold = 0 OR is_sold IS NULL)
+            """, (position_id,))
+
+            position = self.cursor.fetchone()
+            if not position:
+                logger.error(f"포지션을 찾을 수 없습니다: ID {position_id}")
+                return False
+
+            position_dict = dict(position)
+            current_quantity = position_dict['quantity']
+
+            if sell_quantity > current_quantity:
+                logger.error(f"매도 수량({sell_quantity})이 보유 수량({current_quantity})보다 많습니다.")
+                return False
+
+            if sell_quantity == current_quantity:
+                # 전체 매도: is_sold=1로 설정
+                self.cursor.execute("""
+                    UPDATE stock_holdings
+                    SET is_sold = 1, sell_price = ?, sell_date = ?, current_price = ?
+                    WHERE id = ?
+                """, (sell_price, sell_date, sell_price, position_id))
+
+                logger.info(f"전체 매도 완료: {position_dict['company_name']} {sell_quantity}주")
+
+            else:
+                # 부분 매도
+                # 1. 원래 레코드의 수량 차감
+                remaining_quantity = current_quantity - sell_quantity
+                self.cursor.execute("""
+                    UPDATE stock_holdings
+                    SET quantity = ?
+                    WHERE id = ?
+                """, (remaining_quantity, position_id))
+
+                # 2. 매도된 부분을 새 레코드로 추가
+                self.cursor.execute("""
+                    INSERT INTO stock_holdings
+                    (ticker, company_name, buy_price, buy_date, quantity, current_price,
+                     rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, scenario,
+                     is_sold, sell_price, sell_date, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                """, (
+                    position_dict['ticker'],
+                    position_dict['company_name'],
+                    position_dict['buy_price'],
+                    position_dict['buy_date'],
+                    sell_quantity,
+                    sell_price,
+                    position_dict.get('rsi'),
+                    position_dict.get('macd'),
+                    position_dict.get('adr'),
+                    position_dict.get('market_kospi_adr'),
+                    position_dict.get('market_kosdaq_adr'),
+                    position_dict.get('scenario'),
+                    sell_price,
+                    sell_date,
+                    sell_date
+                ))
+
+                logger.info(f"부분 매도 완료: {position_dict['company_name']} {sell_quantity}주 (잔여: {remaining_quantity}주)")
+
+            self.conn.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"매도 처리 실패: {str(e)}")
+            self.conn.rollback()
+            return False
+
     def get_statistics(self) -> Dict[str, Any]:
         """
         전체 매매 통계 조회
