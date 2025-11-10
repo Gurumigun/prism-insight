@@ -33,7 +33,7 @@ echo 종료하려면 Ctrl+C를 누르세요.
 echo ========================================
 echo.
 
-REM Streamlit 실행
-streamlit run streamlit_apps/personal_analyzer.py --server.port 8501 --server.headless false
+REM Streamlit 실행 (매수/매도 기록 기능 포함)
+streamlit run examples/streamlit/app_modern.py --server.port 8501 --server.headless false
 
 pause
