@@ -22,12 +22,6 @@ from queue import Queue
 from threading import Thread
 import uuid
 
-# email_sender import (optional)
-try:
-    from email_sender import send_email
-except ImportError:
-    send_email = None
-
 # TradingJournalDB import
 try:
     from trading_journal_db import TradingJournalDB
@@ -48,11 +42,10 @@ REPORTS_DIR.mkdir(exist_ok=True)
 analysis_queue = Queue()
 
 class AnalysisRequest:
-    def __init__(self, stock_code: str, company_name: str, email: str, reference_date: str):
+    def __init__(self, stock_code: str, company_name: str, reference_date: str):
         self.id = str(uuid.uuid4())
         self.stock_code = stock_code
         self.company_name = company_name
-        self.email = email
         self.reference_date = reference_date
         self.status = "pending"
         self.result = None
@@ -567,12 +560,8 @@ class ModernStockAnalysisApp:
             )
 
             if is_cached:
-                # 캐시된 보고서가 있으면 바로 이메일 전송
-                if send_email:
-                    send_email(request.email, cached_content)
-                    request.result = f"캐시된 분석 보고서가 이메일로 전송되었습니다. (파일: {cached_file.name})"
-                else:
-                    request.result = f"캐시된 분석 보고서를 찾았습니다. (파일: {cached_file.name})"
+                # 캐시된 보고서 사용
+                request.result = f"캐시된 분석 보고서를 찾았습니다. (파일: {cached_file.name})"
             else:
                 # 별도 프로세스로 분석 실행
                 import subprocess
@@ -589,8 +578,7 @@ class ModernStockAnalysisApp:
                         'stock_code': request.stock_code,
                         'company_name': request.company_name,
                         'reference_date': request.reference_date,
-                        'output_file': f"reports/{request.stock_code}_{request.company_name}_{request.reference_date}_gpt4.1.md",
-                        'email': request.email
+                        'output_file': f"reports/{request.stock_code}_{request.company_name}_{request.reference_date}_gpt4.1.md"
                     }
                     json.dump(request_info, f)
                     request_file = f.name
@@ -620,13 +608,6 @@ except ImportError as e:
     print(f"Failed to import analyze_stock: {{e}}")
     exit(1)
 
-try:
-    from email_sender import send_email
-    print("Successfully imported send_email")
-except ImportError as e:
-    print(f"Failed to import send_email: {{e}}")
-    exit(1)
-
 # 요청 정보 로드
 with open("{request_file}", "r") as f:
     info = json.load(f)
@@ -640,22 +621,16 @@ async def run():
             company_name=info["company_name"],
             reference_date=info["reference_date"]
         )
-        
+
         # 결과 저장
         with open(info["output_file"], "w", encoding="utf-8") as f:
             f.write(report)
         print(f"Report saved to {{info['output_file']}}")
-        
-        # 이메일 전송 
-        if send_email(info["email"], report):
-            print(f"Email sent successfully to {{info['email']}}")
-        else:
-            print(f"Failed to send email to {{info['email']}}")
-        
+
         # 임시 파일 삭제
         os.remove("{request_file}")
         print("Analysis completed successfully")
-        
+
     except Exception as e:
         print(f"Error during analysis: {{e}}")
         import traceback
@@ -665,7 +640,7 @@ asyncio.run(run())
 '''
                 ], cwd=project_root)
 
-                request.result = f"분석이 시작되었습니다. 완료 후 이메일로 결과가 전송됩니다."
+                request.result = f"분석이 시작되었습니다. 완료 후 '보고서 보기' 메뉴에서 확인하실 수 있습니다."
 
             request.status = "completed"
 
@@ -696,9 +671,9 @@ asyncio.run(run())
 
         return filepath
 
-    def submit_analysis(self, stock_code: str, company_name: str, email: str, reference_date: str) -> str:
+    def submit_analysis(self, stock_code: str, company_name: str, reference_date: str) -> str:
         """분석 요청 제출"""
-        request = AnalysisRequest(stock_code, company_name, email, reference_date)
+        request = AnalysisRequest(stock_code, company_name, reference_date)
         st.session_state.requests[request.id] = request
         analysis_queue.put(request)
         return request.id
@@ -724,7 +699,6 @@ asyncio.run(run())
 
                 with form_col1:
                     company_name = st.text_input("회사명", placeholder="예: 삼성전자")
-                    email = st.text_input("이메일 주소", placeholder="결과를 받을 이메일")
 
                 with form_col2:
                     stock_code = st.text_input("종목코드", placeholder="예: 005930 (6자리)")
@@ -741,11 +715,11 @@ asyncio.run(run())
                     **Q: 분석은 얼마나 걸리나요?**  
                     A: 일반적으로 5-10분 정도 소요됩니다.
                     
-                    **Q: 어떤 정보가 포함되나요?**  
+                    **Q: 어떤 정보가 포함되나요?**
                     A: 주가 분석, 재무제표 분석, 경쟁사 비교, 투자 지표, 뉴스 분석 등이 포함됩니다.
-                    
-                    **Q: 결과는 어떻게 받나요?**  
-                    A: 입력한 이메일로 결과가 전송되며, 이 사이트의 '보고서 보기' 메뉴에서도 확인 가능합니다.
+
+                    **Q: 결과는 어떻게 받나요?**
+                    A: 분석 완료 후 '보고서 보기' 메뉴에서 확인 가능합니다.
                     """)
 
                 # 디자인된 제출 버튼
@@ -755,12 +729,12 @@ asyncio.run(run())
 
             # 폼 제출 처리
             if submitted:
-                if not self.validate_inputs(company_name, stock_code, email):
+                if not self.validate_inputs(company_name, stock_code):
                     return
 
                 reference_date = analysis_date.strftime("%Y%m%d")
-                request_id = self.submit_analysis(stock_code, company_name, email, reference_date)
-                st.success("분석이 요청되었습니다. 완료되면 이메일로 결과가 전송됩니다. 이후 이 웹사이트에 재접속 후 '보고서 보기' 메뉴에서도 보실 수 있습니다.")
+                request_id = self.submit_analysis(stock_code, company_name, reference_date)
+                st.success("분석이 요청되었습니다. 완료되면 '보고서 보기' 메뉴에서 확인하실 수 있습니다.")
 
         with col2:
             # 분석 정보 카드 (네이티브 컴포넌트 사용)
@@ -913,7 +887,7 @@ asyncio.run(run())
             
             st.markdown('</div>', unsafe_allow_html=True)
 
-    def validate_inputs(self, company_name: str, stock_code: str, email: str) -> bool:
+    def validate_inputs(self, company_name: str, stock_code: str) -> bool:
         """입력값 유효성 검사"""
         if not company_name:
             st.error("회사명을 입력해주세요.")
@@ -923,20 +897,11 @@ asyncio.run(run())
             st.error("올바른 종목코드를 입력해주세요 (6자리 숫자).")
             return False
 
-        if not self.is_valid_email(email):
-            st.error("올바른 이메일 주소를 입력해주세요.")
-            return False
-
         return True
 
     @staticmethod
     def is_valid_stock_code(code: str) -> bool:
         return bool(re.match(r'^\d{6}$', code))
-
-    @staticmethod
-    def is_valid_email(email: str) -> bool:
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        return bool(re.match(pattern, email))
 
     @staticmethod
     def get_download_link(file_path: Path, file_format: str) -> str:
