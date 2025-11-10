@@ -45,10 +45,11 @@ class TradingJournalDB:
 
     def _create_tables(self):
         """필요한 테이블들을 자동으로 생성"""
-        # stock_holdings 테이블 생성
+        # stock_holdings 테이블 생성 (여러 번 매수 가능하도록 id 추가)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS stock_holdings (
-                ticker TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
                 company_name TEXT NOT NULL,
                 buy_price REAL NOT NULL,
                 buy_date TEXT NOT NULL,
@@ -60,7 +61,10 @@ class TradingJournalDB:
                 macd REAL,
                 adr REAL,
                 market_kospi_adr REAL,
-                market_kosdaq_adr REAL
+                market_kosdaq_adr REAL,
+                is_sold INTEGER DEFAULT 0,
+                sell_price REAL,
+                sell_date TEXT
             )
         """)
 
@@ -85,27 +89,16 @@ class TradingJournalDB:
 
     def get_open_positions(self) -> List[Dict[str, Any]]:
         """
-        현재 보유 중인 종목 목록 조회 (미체결 포지션)
+        현재 보유 중인 종목 목록 조회 (미매도 포지션만)
 
         Returns:
-            보유 종목 정보 리스트
-            [{
-                'ticker': '종목코드',
-                'company_name': '종목명',
-                'buy_price': 매수가,
-                'buy_date': '매수일',
-                'current_price': 현재가,
-                'quantity': 수량 (기본값 1),
-                'target_price': 목표가,
-                'stop_loss': 손절가,
-                'profit_rate': 수익률(%),
-                'scenario': 시나리오 정보
-            }, ...]
+            보유 종목 정보 리스트 (개별 매수 건별)
         """
         try:
-            # stock_holdings 테이블에서 보유 종목 조회
+            # is_sold가 0인 것만 조회
             self.cursor.execute("""
                 SELECT
+                    id,
                     ticker,
                     company_name,
                     buy_price,
@@ -120,6 +113,7 @@ class TradingJournalDB:
                     scenario,
                     last_updated
                 FROM stock_holdings
+                WHERE is_sold = 0 OR is_sold IS NULL
                 ORDER BY buy_date DESC
             """)
 
@@ -131,7 +125,6 @@ class TradingJournalDB:
 
             positions = []
             for row in rows:
-                # dict로 변환
                 row_dict = dict(row)
 
                 # 수익률 계산
@@ -143,10 +136,7 @@ class TradingJournalDB:
                 else:
                     profit_rate = 0.0
 
-                # 수량 추가 (기본값 1, 실제로는 각 종목은 포트폴리오의 10% 비중)
-                row_dict['quantity'] = 1
                 row_dict['profit_rate'] = profit_rate
-
                 positions.append(row_dict)
 
             logger.info(f"보유 종목 {len(positions)}개 조회 완료")
@@ -154,7 +144,198 @@ class TradingJournalDB:
 
         except Exception as e:
             logger.error(f"매수 기록 조회 실패: {str(e)}")
-            # 빈 리스트 반환하여 프로그램이 계속 실행되도록 함
+            return []
+
+    def get_aggregated_positions(self) -> List[Dict[str, Any]]:
+        """
+        종목별로 합산된 보유 정보 조회
+
+        Returns:
+            종목별 합산 정보 [{
+                'ticker': 종목코드,
+                'company_name': 종목명,
+                'total_quantity': 총 수량,
+                'avg_buy_price': 평균 매수가,
+                'total_cost': 총 매수 금액,
+                'current_price': 현재가,
+                'total_value': 평가 금액,
+                'profit_rate': 수익률,
+                'buy_count': 매수 횟수
+            }, ...]
+        """
+        try:
+            self.cursor.execute("""
+                SELECT
+                    ticker,
+                    company_name,
+                    SUM(quantity) as total_quantity,
+                    SUM(buy_price * quantity) / SUM(quantity) as avg_buy_price,
+                    SUM(buy_price * quantity) as total_cost,
+                    current_price,
+                    COUNT(*) as buy_count
+                FROM stock_holdings
+                WHERE is_sold = 0 OR is_sold IS NULL
+                GROUP BY ticker, company_name
+                ORDER BY ticker
+            """)
+
+            rows = self.cursor.fetchall()
+
+            aggregated = []
+            for row in rows:
+                row_dict = dict(row)
+
+                total_quantity = row_dict['total_quantity']
+                avg_buy_price = row_dict['avg_buy_price']
+                current_price = row_dict.get('current_price', avg_buy_price)
+
+                total_value = current_price * total_quantity
+                total_cost = row_dict['total_cost']
+
+                if total_cost > 0:
+                    profit_rate = ((total_value - total_cost) / total_cost) * 100
+                else:
+                    profit_rate = 0.0
+
+                row_dict['total_value'] = total_value
+                row_dict['profit_rate'] = profit_rate
+
+                aggregated.append(row_dict)
+
+            return aggregated
+
+        except Exception as e:
+            logger.error(f"합산 정보 조회 실패: {str(e)}")
+            return []
+
+    def get_position_details_by_ticker(self, ticker: str) -> List[Dict[str, Any]]:
+        """
+        특정 종목의 개별 매수 내역 조회
+
+        Args:
+            ticker: 종목 코드
+
+        Returns:
+            개별 매수 내역 리스트
+        """
+        try:
+            self.cursor.execute("""
+                SELECT
+                    id,
+                    ticker,
+                    company_name,
+                    buy_price,
+                    buy_date,
+                    quantity,
+                    current_price,
+                    rsi,
+                    macd,
+                    adr,
+                    market_kospi_adr,
+                    market_kosdaq_adr,
+                    scenario,
+                    last_updated
+                FROM stock_holdings
+                WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+                ORDER BY buy_date DESC
+            """, (ticker,))
+
+            rows = self.cursor.fetchall()
+
+            details = []
+            for row in rows:
+                row_dict = dict(row)
+
+                buy_price = row_dict.get('buy_price', 0)
+                current_price = row_dict.get('current_price', 0)
+
+                if buy_price > 0 and current_price > 0:
+                    profit_rate = ((current_price - buy_price) / buy_price) * 100
+                else:
+                    profit_rate = 0.0
+
+                row_dict['profit_rate'] = profit_rate
+                details.append(row_dict)
+
+            return details
+
+        except Exception as e:
+            logger.error(f"{ticker} 종목 상세 조회 실패: {str(e)}")
+            return []
+
+    def get_all_transactions(self) -> List[Dict[str, Any]]:
+        """
+        모든 거래 내역 조회 (매수 + 매도)
+
+        Returns:
+            전체 거래 내역 (매수/매도 포함)
+        """
+        try:
+            transactions = []
+
+            # 미매도 매수 내역
+            self.cursor.execute("""
+                SELECT
+                    id,
+                    ticker,
+                    company_name,
+                    buy_price,
+                    buy_date,
+                    quantity,
+                    current_price,
+                    rsi,
+                    macd,
+                    adr,
+                    market_kospi_adr,
+                    market_kosdaq_adr,
+                    scenario,
+                    'HOLDING' as status
+                FROM stock_holdings
+                WHERE is_sold = 0 OR is_sold IS NULL
+
+                UNION ALL
+
+                SELECT
+                    id,
+                    ticker,
+                    company_name,
+                    buy_price,
+                    buy_date,
+                    quantity,
+                    sell_price as current_price,
+                    rsi,
+                    macd,
+                    adr,
+                    market_kospi_adr,
+                    market_kosdaq_adr,
+                    scenario,
+                    'SOLD' as status
+                FROM stock_holdings
+                WHERE is_sold = 1
+
+                ORDER BY buy_date DESC
+            """)
+
+            rows = self.cursor.fetchall()
+
+            for row in rows:
+                row_dict = dict(row)
+
+                buy_price = row_dict.get('buy_price', 0)
+                current_price = row_dict.get('current_price', 0)
+
+                if buy_price > 0 and current_price > 0:
+                    profit_rate = ((current_price - buy_price) / buy_price) * 100
+                else:
+                    profit_rate = 0.0
+
+                row_dict['profit_rate'] = profit_rate
+                transactions.append(row_dict)
+
+            return transactions
+
+        except Exception as e:
+            logger.error(f"전체 거래 내역 조회 실패: {str(e)}")
             return []
 
     def get_position_by_ticker(self, ticker: str) -> Optional[Dict[str, Any]]:
@@ -257,7 +438,7 @@ class TradingJournalDB:
         scenario: Optional[str] = None
     ) -> bool:
         """
-        매수 기록 추가
+        매수 기록 추가 (동일 종목 여러 번 매수 가능)
 
         Args:
             ticker: 종목 코드
@@ -276,24 +457,29 @@ class TradingJournalDB:
             성공 여부
         """
         try:
-            # market_kospi_adr, market_kosdaq_adr 컬럼 추가 (기존 테이블 대응)
-            try:
-                self.cursor.execute("ALTER TABLE stock_holdings ADD COLUMN market_kospi_adr REAL")
-                self.conn.commit()
-            except:
-                pass
+            # 신규 컬럼 추가 (기존 테이블 대응)
+            columns_to_add = [
+                ("market_kospi_adr", "REAL"),
+                ("market_kosdaq_adr", "REAL"),
+                ("is_sold", "INTEGER DEFAULT 0"),
+                ("sell_price", "REAL"),
+                ("sell_date", "TEXT"),
+                ("id", "INTEGER")  # 기존 테이블에 id 없는 경우 대응
+            ]
 
-            try:
-                self.cursor.execute("ALTER TABLE stock_holdings ADD COLUMN market_kosdaq_adr REAL")
-                self.conn.commit()
-            except:
-                pass
+            for col_name, col_type in columns_to_add:
+                try:
+                    self.cursor.execute(f"ALTER TABLE stock_holdings ADD COLUMN {col_name} {col_type}")
+                    self.conn.commit()
+                except:
+                    pass
 
+            # INSERT (여러 번 매수 가능하도록 REPLACE 제거)
             self.cursor.execute("""
-                INSERT OR REPLACE INTO stock_holdings
+                INSERT INTO stock_holdings
                 (ticker, company_name, buy_price, buy_date, quantity, current_price,
-                 rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, scenario, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, scenario, last_updated, is_sold)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             """, (
                 ticker,
                 company_name,
@@ -315,7 +501,7 @@ class TradingJournalDB:
             return True
 
         except Exception as e:
-            logger.error(f"매수 기록 저장 실피: {str(e)}")
+            logger.error(f"매수 기록 저장 실패: {str(e)}")
             return False
 
     def get_statistics(self) -> Dict[str, Any]:
