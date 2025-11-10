@@ -5,7 +5,17 @@ from email.mime.application import MIMEApplication
 import markdown
 import markdown.extensions.fenced_code
 import markdown.extensions.tables
-from config import SMTP_SERVER, SMTP_PORT, SENDER_EMAIL, SENDER_PASSWORD
+import os
+
+# config 파일에서 설정을 가져오거나, 환경변수 사용
+try:
+    from config import SMTP_SERVER, SMTP_PORT, SENDER_EMAIL, SENDER_PASSWORD
+except ImportError:
+    # config 파일이 없으면 환경변수 사용
+    SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+    SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+    SENDER_EMAIL = os.getenv('SENDER_EMAIL', '')
+    SENDER_PASSWORD = os.getenv('SENDER_PASSWORD', '')
 
 def convert_md_to_html(md_content: str) -> str:
     """마크다운을 HTML로 변환"""
@@ -58,6 +68,11 @@ def convert_md_to_html(md_content: str) -> str:
 def send_email(to_email: str, report_content: str) -> bool:
     """이메일 전송 함수"""
     try:
+        # SMTP 설정이 없으면 이메일 전송하지 않음
+        if not SENDER_EMAIL or not SENDER_PASSWORD:
+            print("⚠️ 이메일 설정이 없습니다. SENDER_EMAIL, SENDER_PASSWORD 환경변수를 설정하세요.")
+            return False
+
         # 이메일 메시지 생성
         msg = MIMEMultipart('alternative')
         msg['From'] = SENDER_EMAIL
