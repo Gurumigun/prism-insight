@@ -995,8 +995,13 @@ asyncio.run(run())
             print(f"시장 ADR 계산 실패: {str(e)}")
             return None, None
 
-    def get_stock_info(self, ticker):
-        """종목 정보 조회 및 기술적 지표 계산"""
+    def get_stock_info(self, ticker, target_date=None):
+        """종목 정보 조회 및 기술적 지표 계산
+
+        Args:
+            ticker: 종목코드
+            target_date: 기준일 (datetime 객체 또는 None). None이면 오늘 날짜 사용
+        """
         if stock is None:
             return None, None, None, None, None, None
 
@@ -1008,10 +1013,15 @@ asyncio.run(run())
             if not stock_name:
                 return None, None, None, None, None, None
 
-            # 현재가 조회 (최근 영업일)
-            today = datetime.now()
-            end_date = today.strftime("%Y%m%d")
-            start_date = (today - timedelta(days=7)).strftime("%Y%m%d")
+            # 기준일 설정
+            if target_date is None:
+                target_date = datetime.now()
+            elif isinstance(target_date, str):
+                target_date = datetime.strptime(target_date, "%Y%m%d")
+
+            # 현재가 조회 (기준일 기준)
+            end_date = target_date.strftime("%Y%m%d")
+            start_date = (target_date - timedelta(days=7)).strftime("%Y%m%d")
 
             df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
             if df.empty:
@@ -1019,8 +1029,8 @@ asyncio.run(run())
 
             current_price = df.iloc[-1]['종가']
 
-            # 차트 데이터 (최근 100일 - 기술적 지표 계산을 위해 더 많은 데이터 필요)
-            chart_start = (today - timedelta(days=150)).strftime("%Y%m%d")
+            # 차트 데이터 (기준일로부터 과거 150일 - 기술적 지표 계산을 위해 더 많은 데이터 필요)
+            chart_start = (target_date - timedelta(days=150)).strftime("%Y%m%d")
             chart_df = stock.get_market_ohlcv_by_date(chart_start, end_date, ticker)
 
             # 기술적 지표 계산
@@ -1213,10 +1223,67 @@ asyncio.run(run())
 
                 st.markdown("---")
 
+                # 날짜 선택 및 재계산 영역 (form 외부)
+                st.markdown("#### 📅 매수일 선택")
+                date_col1, date_col2 = st.columns([2, 1])
+                with date_col1:
+                    selected_date = st.date_input(
+                        "매수일을 선택하세요",
+                        value=datetime.now(),
+                        max_value=datetime.now(),
+                        help="매수한 날짜를 선택하면 해당 날짜의 기술적 지표를 계산할 수 있습니다",
+                        key="date_selector"
+                    )
+                with date_col2:
+                    st.markdown("")  # 여백
+                    recalc_button = st.button(
+                        "📊 이 날짜로 지표 재계산",
+                        use_container_width=True,
+                        type="secondary"
+                    )
+
+                # 재계산 버튼이 눌렸을 때
+                if recalc_button:
+                    with st.spinner(f"📅 {selected_date.strftime('%Y-%m-%d')} 기준 기술적 지표를 계산하고 있습니다..."):
+                        # 해당 날짜 기준으로 기술적 지표 재계산
+                        _, price_at_date, chart_df_date, rsi_date, macd_date, adr_date = self.get_stock_info(
+                            ticker,
+                            selected_date
+                        )
+
+                        if price_at_date:
+                            # 시장 ADR도 해당 날짜 기준으로 재계산
+                            date_str = selected_date.strftime("%Y%m%d")
+                            kospi_adr_date, kosdaq_adr_date = self.calculate_market_adr(date_str)
+
+                            # 세션 상태 업데이트
+                            st.session_state.searched_price = price_at_date
+                            st.session_state.searched_chart = chart_df_date
+                            st.session_state.searched_rsi = rsi_date
+                            st.session_state.searched_macd = macd_date
+                            st.session_state.searched_adr = adr_date
+                            st.session_state.searched_kospi_adr = kospi_adr_date
+                            st.session_state.searched_kosdaq_adr = kosdaq_adr_date
+
+                            st.success(f"✅ {selected_date.strftime('%Y-%m-%d')} 기준 지표가 업데이트되었습니다!")
+                            st.rerun()
+                        else:
+                            st.error("❌ 해당 날짜의 데이터를 가져올 수 없습니다. 영업일을 선택해주세요.")
+
+                # 현재 세션 상태의 값 다시 읽기
+                current_price = st.session_state.searched_price
+                rsi_value = st.session_state.get('searched_rsi', 0)
+                macd_value = st.session_state.get('searched_macd', 0)
+                adr_value = st.session_state.get('searched_adr', 0)
+                kospi_adr_value = st.session_state.get('searched_kospi_adr', 0)
+                kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
+
+                st.markdown("---")
+
                 with st.form("buy_record_form"):
                     st.markdown("#### 💵 거래 정보")
-                    # 첫 번째 행: 매수가, 수량, 매수일
-                    col1, col2, col3 = st.columns(3)
+                    # 첫 번째 행: 매수가, 수량
+                    col1, col2 = st.columns(2)
                     with col1:
                         buy_price = st.number_input(
                             "💰 매수가 (원) *",
@@ -1233,13 +1300,9 @@ asyncio.run(run())
                             step=1,
                             help="매수한 주식 수량"
                         )
-                    with col3:
-                        buy_date = st.date_input(
-                            "📅 매수일 *",
-                            value=datetime.now(),
-                            max_value=datetime.now(),
-                            help="매수한 날짜"
-                        )
+
+                    # 매수일은 form 위에서 선택한 날짜 사용
+                    buy_date = selected_date
 
                     st.markdown("#### 📈 기술적 지표 (수정 가능)")
                     # 두 번째 행: 기술적 지표
@@ -1296,6 +1359,9 @@ asyncio.run(run())
 
                     # 제출 버튼
                     st.markdown("")  # 간격 추가
+                    st.markdown(f"**선택된 매수일:** {buy_date.strftime('%Y년 %m월 %d일')}")
+                    st.markdown("")  # 간격 추가
+
                     col1, col2, col3 = st.columns([1, 1, 1])
                     with col2:
                         submitted = st.form_submit_button("💾 매수 기록 저장", use_container_width=True, type="primary")
@@ -1324,6 +1390,8 @@ asyncio.run(run())
                                     del st.session_state.searched_kospi_adr
                                 if 'searched_kosdaq_adr' in st.session_state:
                                     del st.session_state.searched_kosdaq_adr
+                                if 'date_selector' in st.session_state:
+                                    del st.session_state.date_selector
                                 st.rerun()
 
                 st.markdown("---")
