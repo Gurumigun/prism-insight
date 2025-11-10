@@ -18,10 +18,15 @@ if current_dir not in sys.path:
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from email_sender import send_email
 from queue import Queue
 from threading import Thread
 import uuid
+
+# email_sender import (optional)
+try:
+    from email_sender import send_email
+except ImportError:
+    send_email = None
 
 # TradingJournalDB import
 try:
@@ -563,8 +568,11 @@ class ModernStockAnalysisApp:
 
             if is_cached:
                 # 캐시된 보고서가 있으면 바로 이메일 전송
-                send_email(request.email, cached_content)
-                request.result = f"캐시된 분석 보고서가 이메일로 전송되었습니다. (파일: {cached_file.name})"
+                if send_email:
+                    send_email(request.email, cached_content)
+                    request.result = f"캐시된 분석 보고서가 이메일로 전송되었습니다. (파일: {cached_file.name})"
+                else:
+                    request.result = f"캐시된 분석 보고서를 찾았습니다. (파일: {cached_file.name})"
             else:
                 # 별도 프로세스로 분석 실행
                 import subprocess
