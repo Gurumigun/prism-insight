@@ -1375,24 +1375,15 @@ asyncio.run(run())
                             # 저장
                             if self.save_buy_record(ticker, stock_name, buy_price, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
                                 st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
-                                # 세션 상태 초기화
-                                del st.session_state.searched_ticker
-                                del st.session_state.searched_name
-                                del st.session_state.searched_price
-                                del st.session_state.searched_chart
-                                if 'searched_rsi' in st.session_state:
-                                    del st.session_state.searched_rsi
-                                if 'searched_macd' in st.session_state:
-                                    del st.session_state.searched_macd
-                                if 'searched_adr' in st.session_state:
-                                    del st.session_state.searched_adr
-                                if 'searched_kospi_adr' in st.session_state:
-                                    del st.session_state.searched_kospi_adr
-                                if 'searched_kosdaq_adr' in st.session_state:
-                                    del st.session_state.searched_kosdaq_adr
-                                if 'date_selector' in st.session_state:
-                                    del st.session_state.date_selector
-                                st.rerun()
+                                st.info("💡 새로운 종목을 등록하려면 위에서 종목코드를 다시 입력하세요.")
+                                # 세션 상태 초기화 - 모든 관련 상태 제거
+                                for key in ['searched_ticker', 'searched_name', 'searched_price', 'searched_chart',
+                                           'searched_rsi', 'searched_macd', 'searched_adr',
+                                           'searched_kospi_adr', 'searched_kosdaq_adr', 'date_selector']:
+                                    if key in st.session_state:
+                                        del st.session_state[key]
+                                # rerun 없이 상태만 초기화하여 사용자가 계속 작업할 수 있도록 함
+                                # st.rerun()을 제거하여 form이 정상적으로 리셋되도록 함
 
                 st.markdown("---")
 
@@ -1407,9 +1398,50 @@ asyncio.run(run())
         with tab2:
             st.markdown("### 💼 보유 종목 조회")
 
+            # 현재가 업데이트 버튼
+            col1, col2 = st.columns([5, 1])
+            with col2:
+                refresh_button = st.button("🔄 현재가 업데이트", use_container_width=True)
+
             try:
                 # 데이터베이스 경로를 project_root로 명시
                 db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+                # 현재가 업데이트가 요청되었을 때
+                if refresh_button and stock is not None:
+                    with st.spinner("현재가를 업데이트하고 있습니다..."):
+                        with TradingJournalDB(db_path) as db:
+                            # 모든 보유 종목의 ticker를 가져옴
+                            positions = db.get_open_positions()
+                            tickers = list(set([p['ticker'] for p in positions]))
+
+                            # 각 ticker의 현재가를 가져와서 업데이트
+                            updated_count = 0
+                            for ticker in tickers:
+                                try:
+                                    # 현재가 조회
+                                    from datetime import datetime, timedelta
+                                    end_date = datetime.now().strftime("%Y%m%d")
+                                    start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+                                    df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                    if not df.empty:
+                                        current_price = df['종가'].iloc[-1]
+
+                                        # 해당 ticker의 모든 레코드 업데이트
+                                        db.cursor.execute("""
+                                            UPDATE stock_holdings
+                                            SET current_price = ?, last_updated = ?
+                                            WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+                                        """, (current_price, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ticker))
+                                        updated_count += 1
+                                except Exception as e:
+                                    # 개별 종목 업데이트 실패는 무시하고 계속 진행
+                                    continue
+
+                            db.conn.commit()
+                            st.success(f"✅ {updated_count}개 종목의 현재가가 업데이트되었습니다!")
+
                 with TradingJournalDB(db_path) as db:
                     aggregated = db.get_aggregated_positions()
 
@@ -1432,6 +1464,26 @@ asyncio.run(run())
                             st.metric("손실 종목", f"{losing}개")
 
                         st.markdown("---")
+
+                        # 데이터프레임 표시 (종목별 합산) - 요약 테이블을 먼저 표시
+                        st.markdown("### 📋 요약 테이블")
+                        df_data = []
+                        for agg in aggregated:
+                            df_data.append({
+                                '종목명': agg['company_name'],
+                                '종목코드': agg['ticker'],
+                                '평균 매수가': f"{agg['avg_buy_price']:,.0f}원",
+                                '현재가': f"{agg['current_price']:,.0f}원",
+                                '총 수량': f"{agg['total_quantity']}주",
+                                '매수 횟수': f"{agg['buy_count']}회",
+                                '수익률': f"{agg['profit_rate']:+.2f}%"
+                            })
+
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+
+                        st.markdown("---")
+                        st.markdown("### 📊 종목별 상세 정보")
 
                         # 보유 종목 목록 표시 (종목별 합산)
                         for idx, agg in enumerate(aggregated, 1):
@@ -1529,23 +1581,6 @@ asyncio.run(run())
 
                                         if detail_idx < len(details):
                                             st.markdown("---")
-
-                        # 데이터프레임 표시 (종목별 합산)
-                        st.markdown("### 📋 요약 테이블")
-                        df_data = []
-                        for agg in aggregated:
-                            df_data.append({
-                                '종목명': agg['company_name'],
-                                '종목코드': agg['ticker'],
-                                '평균 매수가': f"{agg['avg_buy_price']:,.0f}원",
-                                '현재가': f"{agg['current_price']:,.0f}원",
-                                '총 수량': f"{agg['total_quantity']}주",
-                                '매수 횟수': f"{agg['buy_count']}회",
-                                '수익률': f"{agg['profit_rate']:+.2f}%"
-                            })
-
-                        df = pd.DataFrame(df_data)
-                        st.dataframe(df, use_container_width=True, hide_index=True)
 
             except Exception as e:
                 st.error(f"보유 종목 조회 중 오류가 발생했습니다: {str(e)}")

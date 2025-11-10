@@ -164,18 +164,19 @@ class TradingJournalDB:
             }, ...]
         """
         try:
+            # 최신 레코드의 current_price를 명시적으로 가져오도록 수정
             self.cursor.execute("""
                 SELECT
                     ticker,
-                    company_name,
+                    MAX(company_name) as company_name,
                     SUM(quantity) as total_quantity,
                     SUM(buy_price * quantity) / SUM(quantity) as avg_buy_price,
                     SUM(buy_price * quantity) as total_cost,
-                    current_price,
+                    MAX(current_price) as current_price,
                     COUNT(*) as buy_count
                 FROM stock_holdings
                 WHERE is_sold = 0 OR is_sold IS NULL
-                GROUP BY ticker, company_name
+                GROUP BY ticker
                 ORDER BY ticker
             """)
 
