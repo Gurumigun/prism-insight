@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from pathlib import Path
 import markdown
@@ -965,8 +965,6 @@ asyncio.run(run())
     def calculate_market_adr(self, date_str, period=20):
         """코스피/코스닥 시장 ADR 계산"""
         try:
-            from datetime import datetime, timedelta
-
             # 날짜 파싱
             target_date = datetime.strptime(date_str, "%Y%m%d")
             start_date = (target_date - timedelta(days=period + 30)).strftime("%Y%m%d")  # 여유있게
@@ -1006,8 +1004,6 @@ asyncio.run(run())
             return None, None, None, None, None, None
 
         try:
-            from datetime import timedelta
-
             # 종목명 조회
             stock_name = stock.get_market_ticker_name(ticker)
             if not stock_name:
@@ -1424,7 +1420,6 @@ asyncio.run(run())
                             for ticker in tickers:
                                 try:
                                     # 현재가 조회
-                                    from datetime import datetime, timedelta
                                     end_date = datetime.now().strftime("%Y%m%d")
                                     start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
 
@@ -1669,7 +1664,6 @@ asyncio.run(run())
                     with st.spinner("현재가를 조회하고 있습니다..."):
                         if stock is not None:
                             try:
-                                from datetime import datetime, timedelta
                                 end_date = datetime.now().strftime("%Y%m%d")
                                 start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
 
