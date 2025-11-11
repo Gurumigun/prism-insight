@@ -1,5 +1,6 @@
 import streamlit as st
 from datetime import datetime, timedelta
+from typing import Dict, Any
 import re
 from pathlib import Path
 import markdown
@@ -38,17 +39,76 @@ except ImportError:
 REPORTS_DIR = Path(__file__).parent.parent.parent / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
 
+# 상태 파일 저장 디렉토리 설정
+STATUS_DIR = Path(__file__).parent.parent.parent / "analysis_status"
+STATUS_DIR.mkdir(exist_ok=True)
+
+# 요약 정보 저장 디렉토리 설정
+SUMMARY_DIR = Path(__file__).parent.parent.parent / "analysis_summary"
+SUMMARY_DIR.mkdir(exist_ok=True)
+
 # 작업 큐 및 스레드 풀 설정
 analysis_queue = Queue()
 
+# 상태 관리 헬퍼 함수
+def update_analysis_status(request_id: str, status: str, progress: int, message: str, current_step: str = ""):
+    """분석 상태를 파일에 저장"""
+    status_file = STATUS_DIR / f"status_{request_id}.json"
+    status_data = {
+        "status": status,
+        "progress": progress,
+        "message": message,
+        "current_step": current_step,
+        "updated_at": datetime.now().isoformat()
+    }
+    with open(status_file, "w", encoding="utf-8") as f:
+        json.dump(status_data, f, ensure_ascii=False, indent=2)
+
+def get_analysis_status(request_id: str) -> dict:
+    """분석 상태를 파일에서 읽기"""
+    status_file = STATUS_DIR / f"status_{request_id}.json"
+    if status_file.exists():
+        with open(status_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "status": "pending",
+        "progress": 0,
+        "message": "분석 대기 중...",
+        "current_step": "",
+        "updated_at": datetime.now().isoformat()
+    }
+
+def cleanup_status_file(request_id: str):
+    """분석 완료 후 상태 파일 삭제 (선택적)"""
+    status_file = STATUS_DIR / f"status_{request_id}.json"
+    if status_file.exists():
+        status_file.unlink()
+
 class AnalysisRequest:
-    def __init__(self, stock_code: str, company_name: str, reference_date: str):
+    def __init__(self, stock_code: str, reference_date: str):
         self.id = str(uuid.uuid4())
         self.stock_code = stock_code
-        self.company_name = company_name
+        self.company_name = self._get_company_name(stock_code)
         self.reference_date = reference_date
         self.status = "pending"
         self.result = None
+        self.progress = 0
+        self.current_step = ""
+        self.message = "분석 대기 중..."
+
+    @staticmethod
+    def _get_company_name(stock_code: str) -> str:
+        """종목코드로 회사명 자동 조회"""
+        try:
+            if stock:  # pykrx가 사용 가능한 경우
+                # 코스피 조회
+                name = stock.get_market_ticker_name(stock_code)
+                if name:
+                    return name
+            # 조회 실패 시 종목코드 반환
+            return stock_code
+        except:
+            return stock_code
 
 class ModernStockAnalysisApp:
     def __init__(self):
@@ -59,7 +119,7 @@ class ModernStockAnalysisApp:
     def setup_page(self):
         """페이지 설정 및 커스텀 CSS 적용"""
         st.set_page_config(
-            page_title="analysis.stocksimulation.kr | AI 주식 분석 에이전트",
+            page_title="프리즘 애널리틱스 | AI 주식 분석 에이전트",
             page_icon="📊",
             layout="wide",
             # Open Graph 메타데이터 추가
@@ -67,7 +127,7 @@ class ModernStockAnalysisApp:
                 'Get Help': None,
                 'Report a bug': None,
                 'About': """
-                # analysis.stocksimulation.kr
+                # 프리즘 애널리틱스
                 AI 주식 분석 에이전트
                 """
             }
@@ -76,13 +136,13 @@ class ModernStockAnalysisApp:
         # Open Graph 태그 직접 주입
         og_html = """
         <head>
-            <title>analysis.stocksimulation.kr | AI 주식 분석 에이전트</title>
-            <meta property="og:title" content="analysis.stocksimulation.kr | AI 주식 분석 에이전트" />
+            <title>프리즘 애널리틱스 | AI 주식 분석 에이전트</title>
+            <meta property="og:title" content="프리즘 애널리틱스 | AI 주식 분석 에이전트" />
             <meta property="og:description" content="AI 주식 분석 에이전트" />
             <meta property="og:image" content="https://media.istockphoto.com/id/2045262949/ko/%EC%82%AC%EC%A7%84/excited-businessman-raises-hands-and-punches-air-while-celebrating-successful-deal-stock.jpg?s=2048x2048&w=is&k=20&c=XtdmbV6gILRK1ahoMOf0_SFC256rgHyiaID_FeW4ojU=" />
             <meta property="og:url" content="https://analysis.stocksimulation.kr" />
             <meta property="og:type" content="website" />
-            <meta property="og:site_name" content="analysis.stocksimulation.kr" />
+            <meta property="og:site_name" content="프리즘 애널리틱스" />
         </head>
         """
         st.markdown(og_html, unsafe_allow_html=True)
@@ -91,392 +151,33 @@ class ModernStockAnalysisApp:
         self.apply_custom_styles()
 
     def apply_custom_styles(self):
-        """모던한 디자인을 위한 커스텀 CSS 스타일 적용"""
-        st.markdown("""
-        <style>
-            /* 전체 페이지 스타일 */
+        """모던한 다크/라이트 테마 대응 디자인 스타일 적용"""
+        # CSS 파일 경로
+        css_file = Path(__file__).parent / "modern_theme.css"
+
+        # CSS 파일 읽기
+        try:
+            with open(css_file, "r", encoding="utf-8") as f:
+                css_content = f.read()
+
+            # CSS 적용
+            st.markdown(f"""
+            <style>
+            {css_content}
+            </style>
+            """, unsafe_allow_html=True)
+
+        except FileNotFoundError:
+            st.warning("⚠️ CSS 테마 파일을 찾을 수 없습니다. 기본 스타일을 사용합니다.")
+            # 기본 스타일 (fallback)
+            st.markdown("""
+            <style>
             .main {
                 background-color: #fafafa;
                 padding: 1.5rem;
             }
-            
-            /* 제목 및 헤더 스타일 */
-            h1, h2, h3 {
-                font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', sans-serif;
-                color: #1E293B;
-                font-weight: 700;
-            }
-            h1 {
-                font-size: 2.5rem;
-                margin-bottom: 1.5rem;
-                padding-bottom: 1rem;
-                border-bottom: 1px solid #E2E8F0;
-            }
-            h2 {
-                font-size: 1.8rem;
-                margin-top: 2rem;
-                margin-bottom: 1rem;
-            }
-            h3 {
-                font-size: 1.3rem;
-                margin-top: 1.5rem;
-                color: #334155;
-            }
-            
-            /* 카드 컨테이너 스타일 */
-            .card {
-                background-color: white;
-                border-radius: 12px;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-                padding: 1.5rem;
-                margin-bottom: 1.5rem;
-                border: 1px solid #F1F5F9;
-                transition: transform 0.2s ease, box-shadow 0.2s ease;
-            }
-            .card:hover {
-                transform: translateY(-3px);
-                box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
-            }
-            
-            /* 폼 요소 스타일 */
-            .stTextInput > div > div > input {
-                border-radius: 8px;
-                height: 2.8rem;
-                border: 1px solid #E2E8F0;
-            }
-            .stTextInput > div > div > input:focus {
-                border-color: #0EA5E9;
-                box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2);
-            }
-            .stDateInput > div > div > input {
-                border-radius: 8px;
-            }
-            
-            /* 버튼 스타일 */
-            .stButton > button {
-                background-color: #0EA5E9;
-                color: white;
-                border-radius: 8px;
-                height: 3rem;
-                font-weight: 600;
-                border: none;
-                transition: all 0.2s ease;
-            }
-            .stButton > button:hover {
-                background-color: #0284C7;
-                transform: translateY(-2px);
-                box-shadow: 0 4px 12px rgba(2, 132, 199, 0.2);
-            }
-            .stButton > button:active {
-                transform: translateY(0);
-            }
-            
-            /* 선택 요소 스타일 */
-            .stSelectbox > div > div {
-                border-radius: 8px;
-                border: 1px solid #E2E8F0;
-            }
-            
-            /* 사이드바 스타일 */
-            .css-1d391kg, .css-1om1kqc, .css-1n76uvr {
-                background-color: #F8FAFC;
-                padding: 2rem 1rem;
-            }
-            
-            /* 상태 메시지 스타일 */
-            .stAlert {
-                border-radius: 8px;
-                padding: 1rem;
-            }
-            .success {
-                background-color: #ECFDF5;
-                color: #065F46;
-                border: 1px solid #D1FAE5;
-            }
-            .error {
-                background-color: #FEF2F2;
-                color: #991B1B;
-                border: 1px solid #FEE2E2;
-            }
-            .warning {
-                background-color: #FFFBEB;
-                color: #92400E;
-                border: 1px solid #FEF3C7;
-            }
-            .info {
-                background-color: #EFF6FF;
-                color: #1E40AF;
-                border: 1px solid #DBEAFE;
-            }
-            
-            /* 테이블 스타일 */
-            .dataframe {
-                font-family: 'Pretendard', -apple-system, system-ui, sans-serif;
-                width: 100%;
-                border-collapse: collapse;
-            }
-            .dataframe th {
-                background-color: #F1F5F9;
-                padding: 0.75rem 1rem;
-                text-align: left;
-                font-weight: 600;
-                color: #334155;
-                border-top: 1px solid #E2E8F0;
-                border-bottom: 1px solid #CBD5E1;
-            }
-            .dataframe td {
-                padding: 0.75rem 1rem;
-                border-bottom: 1px solid #E2E8F0;
-            }
-            .dataframe tr:nth-child(even) {
-                background-color: #F8FAFC;
-            }
-            
-            /* 다운로드 링크 스타일 */
-            a {
-                color: #0EA5E9;
-                text-decoration: none;
-                font-weight: 500;
-                transition: all 0.2s ease;
-            }
-            a:hover {
-                color: #0284C7;
-                text-decoration: underline;
-            }
-            a[download] {
-                display: inline-block;
-                background-color: #F1F5F9;
-                color: #334155;
-                font-weight: 600;
-                padding: 0.5rem 1rem;
-                border-radius: 6px;
-                margin-right: 0.5rem;
-                border: 1px solid #E2E8F0;
-                text-decoration: none;
-            }
-            a[download]:hover {
-                background-color: #E2E8F0;
-                text-decoration: none;
-            }
-            
-            /* 프로그레스 표시 스타일 */
-            .stProgress > div > div {
-                background-color: #0EA5E9;
-            }
-            
-            /* 마크다운 본문 스타일 */
-            .markdown-body {
-                font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-                color: #334155;
-                line-height: 1.7;
-            }
-            .markdown-body pre {
-                background-color: #F1F5F9;
-                border-radius: 8px;
-                padding: 1rem;
-            }
-            .markdown-body table {
-                width: 100%;
-                border-collapse: collapse;
-                margin: 1rem 0;
-            }
-            .markdown-body table th,
-            .markdown-body table td {
-                padding: 0.5rem 1rem;
-                border: 1px solid #E2E8F0;
-            }
-            .markdown-body table th {
-                background-color: #F1F5F9;
-            }
-            
-            /* 이미지 스타일 */
-            img {
-                border-radius: 8px;
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
-            }
-            
-            /* 헤더 스타일 */
-            .header {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                padding: 1.5rem 0;
-                margin-bottom: 2rem;
-                text-align: center;
-            }
-            .logo-container {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin-bottom: 0.5rem;
-            }
-            .logo {
-                font-size: 2.5rem;
-                margin-right: 0.75rem;
-            }
-            .app-title {
-                font-family: 'Pretendard', -apple-system, system-ui, sans-serif;
-                font-size: 2.5rem;
-                font-weight: 800;
-                color: #0EA5E9;
-                letter-spacing: -0.03em;
-            }
-            .app-description {
-                font-size: 1.1rem;
-                color: #64748B;
-                margin-top: 0.3rem;
-                font-weight: 400;
-            }
-            
-            /* 사이드바 헤더 */
-            .sidebar-header {
-                display: flex;
-                align-items: center;
-                margin-bottom: 1.5rem;
-            }
-            .sidebar-logo {
-                font-size: 1.8rem;
-                margin-right: 0.5rem;
-            }
-            .sidebar-title {
-                font-size: 1.3rem;
-                font-weight: 700;
-                color: #0EA5E9;
-            }
-            
-            /* 상태 카드 */
-            @keyframes progress-animation {
-                0% { width: 0%; }
-                20% { width: 20%; }
-                40% { width: 40%; }
-                60% { width: 60%; }
-                80% { width: 80%; }
-                100% { width: 40%; }
-            }
-            
-            .status-card {
-                display: flex;
-                align-items: flex-start;
-                padding: 1rem;
-                border-radius: 8px;
-                margin-bottom: 1rem;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-            }
-            .status-icon {
-                font-size: 1.5rem;
-                margin-right: 1rem;
-                margin-top: 0.25rem;
-            }
-            .status-details {
-                flex: 1;
-            }
-            .status-title {
-                font-size: 1.1rem;
-                font-weight: 600;
-                margin-bottom: 0.3rem;
-            }
-            .status-info {
-                color: #4B5563;
-                margin-bottom: 0.5rem;
-            }
-            .status-card.pending {
-                background-color: #FFFBEB;
-                border: 1px solid #FEF3C7;
-            }
-            .status-card.completed {
-                background-color: #ECFDF5;
-                border: 1px solid #D1FAE5;
-            }
-            .status-card.failed {
-                background-color: #FEF2F2;
-                border: 1px solid #FEE2E2;
-            }
-            .status-progress-container {
-                height: 6px;
-                background-color: rgba(251, 191, 36, 0.3);
-                border-radius: 3px;
-                overflow: hidden;
-                margin-top: 0.5rem;
-            }
-            .status-progress-bar {
-                height: 100%;
-                background-color: #F59E0B;
-                width: 40%;
-                border-radius: 3px;
-                animation: progress-animation 2s infinite alternate;
-            }
-            
-            /* 기능 리스트 스타일 */
-            .feature-list {
-                list-style-type: none;
-                padding: 0;
-                margin: 0;
-            }
-            .feature-list li {
-                display: flex;
-                align-items: center;
-                margin-bottom: 0.8rem;
-            }
-            .feature-icon {
-                font-size: 1.2rem;
-                margin-right: 0.7rem;
-                width: 24px;
-                text-align: center;
-            }
-            .feature-title {
-                font-weight: 600;
-                margin-right: 0.5rem;
-            }
-            
-            /* 시간 표시 스타일 */
-            .estimate-time {
-                display: flex;
-                align-items: center;
-                margin-bottom: 0.5rem;
-            }
-            .time-icon {
-                font-size: 1.5rem;
-                margin-right: 1rem;
-            }
-            .time-details {
-                flex: 1;
-            }
-            .time-title {
-                font-size: 0.9rem;
-                color: #64748B;
-            }
-            .time-value {
-                font-size: 1.5rem;
-                font-weight: 700;
-                color: #0EA5E9;
-            }
-            .delivery-note {
-                color: #64748B;
-                font-size: 0.9rem;
-                margin-top: 0.3rem;
-            }
-            
-            /* 폼 카드 */
-            .form-card, .report-card, .filter-card {
-                background-color: white;
-                border-radius: 12px;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-                padding: 1.5rem;
-                margin-bottom: 1.5rem;
-                border: 1px solid #F1F5F9;
-            }
-            
-            /* 마크다운 미리보기 */
-            .markdown-preview {
-                padding: 1rem;
-                border: 1px solid #E2E8F0;
-                border-radius: 8px;
-                background-color: #F8FAFC;
-                max-height: 600px;
-                overflow-y: auto;
-            }
-        </style>
-        """, unsafe_allow_html=True)
+            </style>
+            """, unsafe_allow_html=True)
 
     def add_app_header(self):
         """앱 헤더와 브랜딩 추가"""
@@ -484,7 +185,7 @@ class ModernStockAnalysisApp:
         <div class="header">
             <div class="logo-container">
                 <div class="logo">📊</div>
-                <div class="app-title">analysis.stocksimulation.kr</div>
+                <div class="app-title">프리즘 애널리틱스</div>
             </div>
             <div class="app-description">
                 AI 주식 분석 에이전트
@@ -535,6 +236,10 @@ class ModernStockAnalysisApp:
             st.session_state.requests = {}
         if 'processing' not in st.session_state:
             st.session_state.processing = False
+        if 'current_analysis' not in st.session_state:
+            st.session_state.current_analysis = None
+        if 'analysis_mode' not in st.session_state:
+            st.session_state.analysis_mode = False
 
     def start_background_worker(self):
         """백그라운드 작업자 시작"""
@@ -562,7 +267,17 @@ class ModernStockAnalysisApp:
             if is_cached:
                 # 캐시된 보고서 사용
                 request.result = f"캐시된 분석 보고서를 찾았습니다. (파일: {cached_file.name})"
+                request.status = "completed"
+                request.progress = 100
+                request.message = "캐시된 보고서 로드 완료"
+                update_analysis_status(request.id, "completed", 100, "캐시된 보고서 로드 완료", "완료")
             else:
+                # 초기 상태 파일 생성
+                update_analysis_status(request.id, "pending", 5, "분석 준비 중...", "분석 준비")
+                request.progress = 5
+                request.message = "분석 준비 중..."
+                request.current_step = "분석 준비"
+
                 # 별도 프로세스로 분석 실행
                 import subprocess
                 import tempfile
@@ -571,14 +286,19 @@ class ModernStockAnalysisApp:
                 # 프로젝트 루트 디렉토리와 streamlit 디렉토리 경로
                 project_root = str(Path(__file__).parent.parent.parent.absolute())
                 streamlit_dir = str(Path(__file__).parent.absolute())
+                status_dir = str(STATUS_DIR.absolute())
+                summary_dir = str(SUMMARY_DIR.absolute())
 
                 # 요청 정보를 임시 파일에 저장
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
                     request_info = {
+                        'request_id': request.id,
                         'stock_code': request.stock_code,
                         'company_name': request.company_name,
                         'reference_date': request.reference_date,
-                        'output_file': f"reports/{request.stock_code}_{request.company_name}_{request.reference_date}_gpt4.1.md"
+                        'output_file': f"reports/{request.stock_code}_{request.company_name}_{request.reference_date}_gpt4.1.md",
+                        'status_dir': status_dir,
+                        'summary_dir': summary_dir
                     }
                     json.dump(request_info, f)
                     request_file = f.name
@@ -588,6 +308,8 @@ class ModernStockAnalysisApp:
                     "python", "-c",
                     f'''
 import asyncio, json, os, sys
+from datetime import datetime
+from pathlib import Path
 
 # Python path 설정
 project_root = "{project_root}"
@@ -598,55 +320,95 @@ sys.path.insert(0, streamlit_dir)
 # 작업 디렉토리 변경
 os.chdir(project_root)
 
-print(f"Working directory: {{os.getcwd()}}")
-print(f"Python path: {{sys.path[:3]}}")
-
-try:
-    from cores.main import analyze_stock
-    print("Successfully imported analyze_stock")
-except ImportError as e:
-    print(f"Failed to import analyze_stock: {{e}}")
-    exit(1)
+# 상태 업데이트 함수
+def update_status(request_id, status, progress, message, current_step=""):
+    status_file = Path("{status_dir}") / f"status_{{request_id}}.json"
+    status_data = {{
+        "status": status,
+        "progress": progress,
+        "message": message,
+        "current_step": current_step,
+        "updated_at": datetime.now().isoformat()
+    }}
+    with open(status_file, "w", encoding="utf-8") as f:
+        json.dump(status_data, f, ensure_ascii=False, indent=2)
 
 # 요청 정보 로드
 with open("{request_file}", "r") as f:
     info = json.load(f)
 
-# 분석 실행
-async def run():
-    try:
-        print(f"Starting analysis for {{info['company_name']}} ({{info['stock_code']}})")
-        report = await analyze_stock(
-            company_code=info["stock_code"],
-            company_name=info["company_name"],
-            reference_date=info["reference_date"]
-        )
+request_id = info["request_id"]
 
-        # 결과 저장
-        with open(info["output_file"], "w", encoding="utf-8") as f:
-            f.write(report)
-        print(f"Report saved to {{info['output_file']}}")
+try:
+    # 1단계: 모듈 임포트
+    update_status(request_id, "analyzing", 10, "AI 분석 모듈 로드 중...", "모듈 로드")
+    from cores.main import analyze_stock
 
-        # 임시 파일 삭제
-        os.remove("{request_file}")
-        print("Analysis completed successfully")
+    # 2단계: 데이터 수집 시작
+    update_status(request_id, "analyzing", 20, "주가 및 재무 데이터 수집 중...", "데이터 수집")
 
-    except Exception as e:
-        print(f"Error during analysis: {{e}}")
-        import traceback
-        traceback.print_exc()
+    # 분석 실행
+    async def run():
+        try:
+            # 3단계: AI 분석 시작
+            update_status(request_id, "analyzing", 40, "AI 종합 분석 수행 중...", "AI 분석")
 
-asyncio.run(run())
+            report = await analyze_stock(
+                company_code=info["stock_code"],
+                company_name=info["company_name"],
+                reference_date=info["reference_date"]
+            )
+
+            # 4단계: 보고서 작성
+            update_status(request_id, "analyzing", 80, "분석 보고서 작성 중...", "보고서 작성")
+
+            # 결과 저장
+            with open(info["output_file"], "w", encoding="utf-8") as f:
+                f.write(report)
+
+            # 4.5단계: 요약 정보 생성
+            update_status(request_id, "analyzing", 90, "핵심 정보 요약 중...", "요약 생성")
+
+            try:
+                from cores.report_parser import parse_report_file, save_summary_json
+
+                # 보고서 파싱 및 요약 생성
+                summary = parse_report_file(info["output_file"])
+
+                # 요약 JSON 저장
+                summary_file = Path(info["summary_dir"]) / f"summary_{{request_id}}.json"
+                save_summary_json(summary, str(summary_file))
+
+            except Exception as e:
+                # 요약 생성 실패해도 분석은 완료로 처리
+                print(f"Warning: Failed to generate summary: {{e}}")
+
+            # 5단계: 완료
+            update_status(request_id, "completed", 100, "분석이 완료되었습니다!", "완료")
+
+        except Exception as e:
+            update_status(request_id, "failed", 0, f"분석 중 오류 발생: {{str(e)}}", "오류")
+            raise
+
+    asyncio.run(run())
+
+    # 임시 파일 삭제
+    os.remove("{request_file}")
+
+except Exception as e:
+    update_status(request_id, "failed", 0, f"분석 중 오류 발생: {{str(e)}}", "오류")
+    import traceback
+    traceback.print_exc()
 '''
                 ], cwd=project_root)
 
-                request.result = f"분석이 시작되었습니다. 완료 후 '보고서 보기' 메뉴에서 확인하실 수 있습니다."
-
-            request.status = "completed"
+                request.result = f"분석이 시작되었습니다."
+                # status는 pending으로 유지 (백그라운드 프로세스가 업데이트)
 
         except Exception as e:
             request.status = "failed"
             request.result = f"분석 중 오류가 발생했습니다: {str(e)}"
+            update_analysis_status(request.id, "failed", 0, str(e), "오류")
 
     @staticmethod
     def get_cached_report(stock_code: str, reference_date: str) -> tuple[bool, str, Path | None]:
@@ -671,9 +433,9 @@ asyncio.run(run())
 
         return filepath
 
-    def submit_analysis(self, stock_code: str, company_name: str, reference_date: str) -> str:
+    def submit_analysis(self, stock_code: str, reference_date: str) -> str:
         """분석 요청 제출"""
-        request = AnalysisRequest(stock_code, company_name, reference_date)
+        request = AnalysisRequest(stock_code, reference_date)
         st.session_state.requests[request.id] = request
         analysis_queue.put(request)
         return request.id
@@ -683,9 +445,14 @@ asyncio.run(run())
         # 커스텀 헤더 추가
         self.add_app_header()
 
+        # 분석 모드가 활성화된 경우 분석 상세 페이지 렌더링
+        if st.session_state.analysis_mode and st.session_state.current_analysis:
+            self.render_analysis_detail()
+            return
+
         # 앱 설명 카드 (텍스트만 사용)
         st.markdown("### 🤖 AI 주식 분석 에이전트 서비스")
-        st.markdown("이 서비스는 AI를 활용하여 종목을 심층 분석하고 전문가 수준의 투자 분석 보고서를 자동으로 생성합니다. 회사 정보와 이메일을 입력하시면 분석이 완료된 후 결과가 이메일로 전송됩니다.")
+        st.markdown("이 서비스는 AI를 활용하여 종목을 심층 분석하고 전문가 수준의 투자 분석 보고서를 자동으로 생성합니다.")
 
         # 두 개의 열로 나누어 레이아웃 구성
         col1, col2 = st.columns([2, 1])
@@ -695,32 +462,7 @@ asyncio.run(run())
             st.markdown("## 분석 요청")
 
             with st.form("analysis_form"):
-                form_col1, form_col2 = st.columns(2)
-
-                with form_col1:
-                    company_name = st.text_input("회사명", placeholder="예: 삼성전자")
-
-                with form_col2:
-                    stock_code = st.text_input("종목코드", placeholder="예: 005930 (6자리)")
-                    today = datetime.now().date()
-                    analysis_date = st.date_input(
-                        "분석 기준일",
-                        value=today,
-                        max_value=today
-                    )
-
-                # FAQ 토글
-                with st.expander("📌 자주 묻는 질문"):
-                    st.markdown("""
-                    **Q: 분석은 얼마나 걸리나요?**  
-                    A: 일반적으로 5-10분 정도 소요됩니다.
-                    
-                    **Q: 어떤 정보가 포함되나요?**
-                    A: 주가 분석, 재무제표 분석, 경쟁사 비교, 투자 지표, 뉴스 분석 등이 포함됩니다.
-
-                    **Q: 결과는 어떻게 받나요?**
-                    A: 분석 완료 후 '보고서 보기' 메뉴에서 확인 가능합니다.
-                    """)
+                stock_code = st.text_input("종목코드", placeholder="예: 005930 (6자리)")
 
                 # 디자인된 제출 버튼
                 submit_col1, submit_col2, submit_col3 = st.columns([1, 2, 1])
@@ -729,12 +471,17 @@ asyncio.run(run())
 
             # 폼 제출 처리
             if submitted:
-                if not self.validate_inputs(company_name, stock_code):
+                if not self.validate_inputs(stock_code):
                     return
 
-                reference_date = analysis_date.strftime("%Y%m%d")
-                request_id = self.submit_analysis(stock_code, company_name, reference_date)
-                st.success("분석이 요청되었습니다. 완료되면 '보고서 보기' 메뉴에서 확인하실 수 있습니다.")
+                # 자동으로 오늘 날짜 사용
+                reference_date = datetime.now().strftime("%Y%m%d")
+                request_id = self.submit_analysis(stock_code, reference_date)
+
+                # 분석 모드 활성화
+                st.session_state.analysis_mode = True
+                st.session_state.current_analysis = request_id
+                st.rerun()
 
         with col2:
             # 분석 정보 카드 (네이티브 컴포넌트 사용)
@@ -751,13 +498,298 @@ asyncio.run(run())
                 st.markdown(f"{feature['icon']} **{feature['title']}** - {feature['desc']}")
 
             # 분석 완료 예상 시간 (네이티브 컴포넌트 사용)
-            st.markdown("### 분석 예상 시간")
-            st.markdown("⏱️ **5-10분**")
-            st.markdown("분석 완료 후 이메일로 전송됩니다")
+            st.markdown("### ⏱️ 분석 예상 시간")
+            st.markdown("**5-10분** 소요 예상")
 
-        # 분석 상태 섹션
-        if st.session_state.requests:
-            self.render_request_status()
+    def render_analysis_detail(self):
+        """분석 상세 페이지 렌더링"""
+        request_id = st.session_state.current_analysis
+
+        if request_id not in st.session_state.requests:
+            st.error("분석 요청을 찾을 수 없습니다.")
+            if st.button("🏠 처음으로 돌아가기"):
+                st.session_state.analysis_mode = False
+                st.session_state.current_analysis = None
+                st.rerun()
+            return
+
+        request = st.session_state.requests[request_id]
+
+        # 상태 파일에서 실시간 상태 읽기
+        status_data = get_analysis_status(request_id)
+        current_status = status_data.get("status", "pending")
+        progress = status_data.get("progress", 0)
+        message = status_data.get("message", "분석 대기 중...")
+        current_step = status_data.get("current_step", "")
+
+        # request 객체 업데이트
+        request.progress = progress
+        request.message = message
+        request.current_step = current_step
+
+        # status 업데이트 (completed나 failed는 변경)
+        if current_status in ["completed", "failed"]:
+            request.status = current_status
+
+        # 헤더
+        if current_status == "completed":
+            st.markdown(f"# ✅ AI 분석 완료!")
+        elif current_status == "failed":
+            st.markdown(f"# ❌ 분석 실패")
+        else:
+            st.markdown(f"# 🔬 AI 분석 진행 중")
+
+        st.markdown(f"## **{request.company_name}** ({request.stock_code})")
+        st.markdown("---")
+
+        # 진행 상황에 따른 표시
+        if current_status in ["pending", "analyzing"]:
+            # 진행 중
+            st.markdown("### 📊 분석 진행 상황")
+
+            # 실시간 프로그레스 바
+            progress_value = progress / 100.0
+            st.progress(progress_value)
+
+            # 현재 상태 메시지 표시
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.markdown(f"**현재 단계**: {current_step}")
+            with col2:
+                st.markdown(f"**진행률**: {progress}%")
+            with col3:
+                # 경과 시간 계산
+                import time
+                if not hasattr(request, 'start_time'):
+                    request.start_time = time.time()
+                elapsed = int(time.time() - request.start_time)
+                st.markdown(f"**경과**: {elapsed // 60}분 {elapsed % 60}초")
+
+            st.info(f"⏳ {message}")
+
+            # 단계별 상세 정보
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("#### 🔍 분석 단계")
+
+                # 진행률 기반 단계 표시
+                steps = [
+                    {"icon": "🔍", "title": "분석 준비", "progress_threshold": 5},
+                    {"icon": "📊", "title": "모듈 로드", "progress_threshold": 10},
+                    {"icon": "📈", "title": "데이터 수집", "progress_threshold": 20},
+                    {"icon": "🤖", "title": "AI 분석", "progress_threshold": 40},
+                    {"icon": "📝", "title": "보고서 작성", "progress_threshold": 80},
+                    {"icon": "🎯", "title": "요약 생성", "progress_threshold": 90},
+                    {"icon": "✅", "title": "완료", "progress_threshold": 100}
+                ]
+
+                for step in steps:
+                    if progress >= step["progress_threshold"]:
+                        st.markdown(f"✅ {step['icon']} {step['title']}")
+                    elif progress >= step["progress_threshold"] - 5:
+                        st.markdown(f"🔄 **{step['icon']} {step['title']} (진행 중)**")
+                    else:
+                        st.markdown(f"⏳ {step['icon']} {step['title']}")
+
+            with col2:
+                st.markdown("#### 📈 분석 내용")
+                analysis_items = [
+                    "📊 기술적 지표 분석",
+                    "💰 재무제표 분석",
+                    "🏢 경쟁사 비교 분석",
+                    "📰 뉴스 센티멘트 분석",
+                    "📈 투자 지표 산출"
+                ]
+                for item in analysis_items:
+                    st.markdown(f"• {item}")
+
+            st.markdown("---")
+            st.warning("⏳ 분석이 진행 중입니다. 예상 소요 시간: 5-10분\n\n이 페이지는 3초마다 자동으로 새로고침됩니다.")
+
+            # 자동 새로고침 (3초마다)
+            import time
+            time.sleep(3)
+            st.rerun()
+
+        elif current_status == "completed":
+            # 완료
+            st.success("✅ 분석이 완료되었습니다!")
+
+            # 요약 정보 로드
+            summary_file = SUMMARY_DIR / f"summary_{request_id}.json"
+            summary = None
+            if summary_file.exists():
+                with open(summary_file, 'r', encoding='utf-8') as f:
+                    summary = json.load(f)
+
+            # 요약 카드 표시
+            if summary:
+                st.markdown("---")
+                st.markdown("## 🎯 AI 종합 평가")
+
+                # 핵심 지표 3개
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    opinion = summary.get('investment_opinion', '분석중')
+                    opinion_emoji = "🟢" if opinion == "매수" else "🟡" if opinion == "중립" else "🔴" if opinion == "매도" else "⚪"
+                    st.markdown(f"### {opinion_emoji} 투자 의견")
+                    st.markdown(f"**{opinion}**")
+
+                with col2:
+                    target = summary.get('target_price', 'N/A')
+                    st.markdown(f"### 💰 목표가")
+                    st.markdown(f"**{target}**")
+
+                with col3:
+                    risk = summary.get('risk_level', '중간')
+                    risk_emoji = "🔴" if risk == "높음" else "🟡" if risk == "중간" else "🟢"
+                    st.markdown(f"### {risk_emoji} 리스크")
+                    st.markdown(f"**{risk}**")
+
+                # 주요 분석 하이라이트
+                st.markdown("---")
+                st.markdown("## 📊 주요 분석 하이라이트")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("### 💡 기술적 분석")
+                    tech_indicators = summary.get('technical_indicators', {})
+                    if tech_indicators:
+                        if 'rsi' in tech_indicators:
+                            st.markdown(f"• **RSI**: {tech_indicators['rsi']}")
+                        if 'macd' in tech_indicators:
+                            st.markdown(f"• **MACD**: {tech_indicators['macd']}")
+                        if 'moving_average' in tech_indicators:
+                            st.markdown(f"• **이동평균**: {tech_indicators['moving_average']}")
+                    else:
+                        st.info("기술적 지표 정보 없음")
+
+                    st.markdown("### 💰 재무 분석")
+                    fin_metrics = summary.get('financial_metrics', {})
+                    if fin_metrics:
+                        if 'per' in fin_metrics:
+                            st.markdown(f"• **PER**: {fin_metrics['per']}")
+                        if 'pbr' in fin_metrics:
+                            st.markdown(f"• **PBR**: {fin_metrics['pbr']}")
+                        if 'roe' in fin_metrics:
+                            st.markdown(f"• **ROE**: {fin_metrics['roe']}%")
+                    else:
+                        st.info("재무 지표 정보 없음")
+
+                with col2:
+                    st.markdown("### 🎯 매수 전략")
+                    buy_zones = summary.get('buy_zones', [])
+                    if buy_zones:
+                        for i, zone in enumerate(buy_zones[:3], 1):
+                            st.markdown(f"• **{i}차 매수**: {zone.get('low')} ~ {zone.get('high')}")
+                    else:
+                        st.info("매수 가격대 정보 없음")
+
+                    stop_loss = summary.get('stop_loss')
+                    if stop_loss:
+                        st.markdown(f"• **손절가**: {stop_loss}")
+
+                    st.markdown("### 📈 핵심 투자 포인트")
+                    key_points = summary.get('key_points', [])
+                    if key_points:
+                        for point in key_points[:3]:
+                            st.markdown(f"• {point}")
+                    else:
+                        st.info("핵심 포인트 정보 없음")
+
+                # 다음 액션
+                st.markdown("---")
+                st.markdown("## 🎬 다음 액션")
+
+                btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+                with btn_col1:
+                    if st.button("📄 전체 보고서 보기", use_container_width=True, type="primary"):
+                        st.session_state.analysis_mode = False
+                        st.session_state.current_analysis = None
+                        st.info("보고서 보기 메뉴로 이동하여 결과를 확인하세요.")
+
+                with btn_col2:
+                    if st.button("📊 차트 상세 분석", use_container_width=True):
+                        st.info("차트 분석 기능은 준비 중입니다.")
+
+                with btn_col3:
+                    if st.button("💾 요약 다운로드", use_container_width=True):
+                        # JSON 다운로드
+                        summary_json = json.dumps(summary, ensure_ascii=False, indent=2)
+                        st.download_button(
+                            label="JSON 다운로드",
+                            data=summary_json,
+                            file_name=f"summary_{request.company_name}_{request.stock_code}.json",
+                            mime="application/json"
+                        )
+
+            else:
+                # 요약 정보가 없는 경우 기본 화면
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    st.markdown("### 📊 분석 결과")
+                    st.markdown(f"**{request.result}**")
+
+                with col2:
+                    if st.button("📄 보고서 보기", use_container_width=True, type="primary"):
+                        st.session_state.analysis_mode = False
+                        st.session_state.current_analysis = None
+                        st.info("보고서 보기 메뉴로 이동하여 결과를 확인하세요.")
+
+                # 분석 완료 상세 정보
+                st.markdown("---")
+                st.markdown("### ✨ 생성된 분석 항목")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("기술적 분석", "완료 ✅")
+                    st.metric("재무 분석", "완료 ✅")
+
+                with col2:
+                    st.metric("경쟁사 비교", "완료 ✅")
+                    st.metric("투자 지표", "완료 ✅")
+
+                with col3:
+                    st.metric("뉴스 분석", "완료 ✅")
+                    st.metric("종합 평가", "완료 ✅")
+
+        elif current_status == "failed":
+            # 실패
+            st.error("❌ 분석 중 오류가 발생했습니다.")
+            st.markdown(f"**오류 내용**: {message}")
+
+            st.markdown("---")
+            st.warning("분석을 다시 시도하거나, 종목코드를 확인해주세요.")
+
+        # 하단 버튼
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 1, 1])
+
+        with col1:
+            if st.button("🏠 처음으로 돌아가기", use_container_width=True):
+                st.session_state.analysis_mode = False
+                st.session_state.current_analysis = None
+                st.rerun()
+
+        with col2:
+            if current_status == "completed" or current_status == "failed":
+                if st.button("🔄 새 분석 시작", use_container_width=True, type="primary"):
+                    st.session_state.analysis_mode = False
+                    st.session_state.current_analysis = None
+                    st.rerun()
+
+        with col3:
+            if st.button("📋 분석 기록 보기", use_container_width=True):
+                st.session_state.analysis_mode = False
+                st.session_state.current_analysis = None
+                st.info("보고서 보기 메뉴에서 과거 분석 기록을 확인하세요.")
 
     def render_request_status(self):
         """요청 상태를 표시하는 메서드"""
@@ -887,12 +919,8 @@ asyncio.run(run())
             
             st.markdown('</div>', unsafe_allow_html=True)
 
-    def validate_inputs(self, company_name: str, stock_code: str) -> bool:
+    def validate_inputs(self, stock_code: str) -> bool:
         """입력값 유효성 검사"""
-        if not company_name:
-            st.error("회사명을 입력해주세요.")
-            return False
-
         if not self.is_valid_stock_code(stock_code):
             st.error("올바른 종목코드를 입력해주세요 (6자리 숫자).")
             return False
@@ -1827,7 +1855,6 @@ asyncio.run(run())
                                 use_container_width=True
                             ):
                                 st.session_state.selected_position_id = pos.get('id')
-                                st.rerun()
 
                             # 선택된 포지션의 경우 상세 정보 표시
                             if is_selected:
@@ -2301,13 +2328,653 @@ streamlit run examples/streamlit/app_modern.py
             import traceback
             st.code(traceback.format_exc())
 
+    def calculate_statistics(self, year: int = None, month: int = None) -> Dict[str, Any]:
+        """
+        기간별 통계 계산
+
+        Args:
+            year: 연도 (None이면 전체)
+            month: 월 (None이면 전체 또는 연도별)
+
+        Returns:
+            통계 딕셔너리
+        """
+        try:
+            if not TradingJournalDB:
+                return {}
+
+            db = TradingJournalDB()
+
+            # 매도된 종목만 조회 (is_sold = 1)
+            query = """
+                SELECT
+                    id, ticker, company_name, buy_price, buy_date,
+                    sell_price, sell_date, quantity
+                FROM stock_holdings
+                WHERE is_sold = 1
+            """
+            params = []
+
+            if year and month:
+                # 특정 월의 매도 기록만
+                query += " AND strftime('%Y', sell_date) = ? AND strftime('%m', sell_date) = ?"
+                params = [str(year), f"{month:02d}"]
+            elif year:
+                # 특정 연도의 매도 기록만
+                query += " AND strftime('%Y', sell_date) = ?"
+                params = [str(year)]
+
+            db.cursor.execute(query, params)
+            trades = db.cursor.fetchall()
+
+            if not trades:
+                return {
+                    'total_profit': 0,
+                    'profit_amount': 0,
+                    'loss_amount': 0,
+                    'profit_rate': 0.0,
+                    'buy_count': 0,
+                    'sell_count': 0,
+                    'profit_count': 0,
+                    'loss_count': 0,
+                    'total_trades': 0
+                }
+
+            # 통계 계산
+            total_profit = 0
+            profit_amount = 0
+            loss_amount = 0
+            profit_count = 0
+            loss_count = 0
+            total_investment = 0
+
+            # 매수 건수 계산 (해당 기간에 매수된 건수)
+            buy_query = "SELECT COUNT(*) FROM stock_holdings WHERE 1=1"
+            buy_params = []
+            if year and month:
+                buy_query += " AND strftime('%Y', buy_date) = ? AND strftime('%m', buy_date) = ?"
+                buy_params = [str(year), f"{month:02d}"]
+            elif year:
+                buy_query += " AND strftime('%Y', buy_date) = ?"
+                buy_params = [str(year)]
+
+            db.cursor.execute(buy_query, buy_params)
+            buy_count = db.cursor.fetchone()[0]
+
+            for trade in trades:
+                buy_price = trade['buy_price']
+                sell_price = trade['sell_price']
+                quantity = trade['quantity']
+
+                # 손익 계산
+                profit = (sell_price - buy_price) * quantity
+                investment = buy_price * quantity
+
+                total_profit += profit
+                total_investment += investment
+
+                if profit > 0:
+                    profit_amount += profit
+                    profit_count += 1
+                else:
+                    loss_amount += abs(profit)
+                    loss_count += 1
+
+            # 수익률 계산
+            profit_rate = (total_profit / total_investment * 100) if total_investment > 0 else 0.0
+
+            db.close()
+
+            return {
+                'total_profit': total_profit,
+                'profit_amount': profit_amount,
+                'loss_amount': loss_amount,
+                'profit_rate': profit_rate,
+                'buy_count': buy_count,
+                'sell_count': len(trades),
+                'profit_count': profit_count,
+                'loss_count': loss_count,
+                'total_trades': len(trades)
+            }
+
+        except Exception as e:
+            st.error(f"통계 계산 중 오류 발생: {str(e)}")
+            return {}
+
+    def calculate_daily_statistics(self, year: int, month: int) -> Dict[int, Dict[str, Any]]:
+        """
+        일별 통계 계산
+
+        Args:
+            year: 연도
+            month: 월
+
+        Returns:
+            {일: {profit, profit_rate, trade_count, stocks}} 형식의 딕셔너리
+        """
+        try:
+            if not TradingJournalDB:
+                return {}
+
+            db = TradingJournalDB()
+
+            # 해당 월의 매도 기록 조회
+            query = """
+                SELECT
+                    strftime('%d', sell_date) as day,
+                    ticker, company_name, buy_price, sell_price, quantity
+                FROM stock_holdings
+                WHERE is_sold = 1
+                AND strftime('%Y', sell_date) = ?
+                AND strftime('%m', sell_date) = ?
+            """
+
+            db.cursor.execute(query, [str(year), f"{month:02d}"])
+            trades = db.cursor.fetchall()
+
+            daily_stats = {}
+
+            for trade in trades:
+                day = int(trade['day'])
+                buy_price = trade['buy_price']
+                sell_price = trade['sell_price']
+                quantity = trade['quantity']
+                company_name = trade['company_name']
+
+                profit = (sell_price - buy_price) * quantity
+                profit_rate = ((sell_price - buy_price) / buy_price * 100) if buy_price > 0 else 0.0
+
+                if day not in daily_stats:
+                    daily_stats[day] = {
+                        'profit': 0,
+                        'investment': 0,
+                        'trade_count': 0,
+                        'stocks': []
+                    }
+
+                daily_stats[day]['profit'] += profit
+                daily_stats[day]['investment'] += buy_price * quantity
+                daily_stats[day]['trade_count'] += 1
+                daily_stats[day]['stocks'].append(company_name)
+
+            # 각 일별 수익률 계산
+            for day in daily_stats:
+                investment = daily_stats[day]['investment']
+                profit = daily_stats[day]['profit']
+                daily_stats[day]['profit_rate'] = (profit / investment * 100) if investment > 0 else 0.0
+
+            db.close()
+
+            return daily_stats
+
+        except Exception as e:
+            st.error(f"일별 통계 계산 중 오류 발생: {str(e)}")
+            return {}
+
+    def get_monthly_trades(self, year: int = None, month: int = None) -> Dict[str, list]:
+        """
+        월별 매수/매도 종목 리스트 조회
+
+        Args:
+            year: 연도
+            month: 월
+
+        Returns:
+            {'buys': [...], 'sells': [...]} 딕셔너리
+        """
+        try:
+            if not TradingJournalDB:
+                return {'buys': [], 'sells': []}
+
+            db = TradingJournalDB()
+
+            # 매수 종목 조회
+            buy_query = """
+                SELECT
+                    ticker, company_name, buy_price, buy_date, quantity,
+                    is_sold, sell_price, sell_date
+                FROM stock_holdings
+                WHERE 1=1
+            """
+            buy_params = []
+
+            if year and month:
+                buy_query += " AND strftime('%Y', buy_date) = ? AND strftime('%m', buy_date) = ?"
+                buy_params = [str(year), f"{month:02d}"]
+            elif year:
+                buy_query += " AND strftime('%Y', buy_date) = ?"
+                buy_params = [str(year)]
+
+            buy_query += " ORDER BY buy_date DESC"
+
+            db.cursor.execute(buy_query, buy_params)
+            buys = [dict(row) for row in db.cursor.fetchall()]
+
+            # 매도 종목 조회
+            sell_query = """
+                SELECT
+                    ticker, company_name, buy_price, buy_date, sell_price, sell_date, quantity
+                FROM stock_holdings
+                WHERE is_sold = 1
+            """
+            sell_params = []
+
+            if year and month:
+                sell_query += " AND strftime('%Y', sell_date) = ? AND strftime('%m', sell_date) = ?"
+                sell_params = [str(year), f"{month:02d}"]
+            elif year:
+                sell_query += " AND strftime('%Y', sell_date) = ?"
+                sell_params = [str(year)]
+
+            sell_query += " ORDER BY sell_date DESC"
+
+            db.cursor.execute(sell_query, sell_params)
+            sells = [dict(row) for row in db.cursor.fetchall()]
+
+            db.close()
+
+            return {'buys': buys, 'sells': sells}
+
+        except Exception as e:
+            st.error(f"월별 거래 조회 중 오류 발생: {str(e)}")
+            return {'buys': [], 'sells': []}
+
+    def render_calendar(self, year: int, month: int, daily_stats: Dict[int, Dict[str, Any]]):
+        """
+        달력 UI 렌더링
+
+        Args:
+            year: 연도
+            month: 월
+            daily_stats: 일별 통계 데이터
+        """
+        import calendar
+
+        # 달력 생성
+        cal = calendar.monthcalendar(year, month)
+        weekdays = ['월', '화', '수', '목', '금', '토', '일']
+
+        # CSS 스타일
+        calendar_css = """
+        <style>
+        .calendar-container {
+            width: 100%;
+            margin: 20px 0;
+        }
+        .calendar-header {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .calendar-header-cell {
+            background: var(--gradient-primary);
+            color: white;
+            padding: 10px;
+            text-align: center;
+            font-weight: 600;
+            border-radius: 8px;
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+        }
+        .calendar-cell {
+            min-height: 100px;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-light);
+            background: var(--bg-elevated);
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        .calendar-cell:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        .calendar-cell-empty {
+            background: transparent;
+            border: none;
+        }
+        .calendar-day {
+            font-weight: 600;
+            font-size: 16px;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        .calendar-profit-positive {
+            color: #EF4444;
+            font-weight: 700;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .calendar-profit-negative {
+            color: #3B82F6;
+            font-weight: 700;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .calendar-rate {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .calendar-trades {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            margin-top: 5px;
+        }
+        </style>
+        """
+
+        st.markdown(calendar_css, unsafe_allow_html=True)
+
+        # 달력 헤더
+        header_html = '<div class="calendar-container"><div class="calendar-header">'
+        for weekday in weekdays:
+            header_html += f'<div class="calendar-header-cell">{weekday}</div>'
+        header_html += '</div>'
+
+        # 달력 그리드
+        grid_html = '<div class="calendar-grid">'
+
+        for week in cal:
+            for day in week:
+                if day == 0:
+                    grid_html += '<div class="calendar-cell calendar-cell-empty"></div>'
+                else:
+                    stats = daily_stats.get(day, None)
+
+                    if stats:
+                        profit = stats['profit']
+                        profit_rate = stats['profit_rate']
+                        trade_count = stats['trade_count']
+                        stocks = stats.get('stocks', [])
+
+                        profit_class = 'calendar-profit-positive' if profit >= 0 else 'calendar-profit-negative'
+                        profit_sign = '+' if profit >= 0 else ''
+
+                        # 종목명 표시 (최대 2개)
+                        stocks_text = ', '.join(stocks[:2])
+                        if len(stocks) > 2:
+                            stocks_text += f' 외 {len(stocks)-2}'
+
+                        grid_html += f'<div class="calendar-cell"><div class="calendar-day">{day}</div><div class="calendar-stocks" style="font-size:11px;color:var(--text-tertiary);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{stocks_text}</div><div class="{profit_class}">{profit_sign}{profit:,.0f}원<div class="calendar-rate">({profit_sign}{profit_rate:.2f}%)</div></div><div class="calendar-trades">{trade_count}건</div></div>'
+                    else:
+                        grid_html += f'<div class="calendar-cell"><div class="calendar-day">{day}</div></div>'
+
+        grid_html += '</div></div>'
+
+        st.markdown(header_html + grid_html, unsafe_allow_html=True)
+
+    def render_statistics(self):
+        """통계 탭 렌더링"""
+        try:
+            # 헤더
+            st.markdown("## 📊 투자 통계")
+
+            if not TradingJournalDB:
+                st.warning("데이터베이스 연결이 필요합니다.")
+                return
+
+            # 세션 상태 초기화
+            if 'stats_year' not in st.session_state:
+                st.session_state.stats_year = datetime.now().year
+            if 'stats_month' not in st.session_state:
+                st.session_state.stats_month = datetime.now().month
+            if 'stats_view' not in st.session_state:
+                st.session_state.stats_view = 'monthly'  # monthly, yearly, all
+
+            # 기간 선택
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+
+            with col1:
+                if st.button("◀", key="prev_period"):
+                    if st.session_state.stats_view == 'monthly':
+                        if st.session_state.stats_month == 1:
+                            st.session_state.stats_month = 12
+                            st.session_state.stats_year -= 1
+                        else:
+                            st.session_state.stats_month -= 1
+                    elif st.session_state.stats_view == 'yearly':
+                        st.session_state.stats_year -= 1
+
+            with col3:
+                view_options = {
+                    'monthly': '월별',
+                    'yearly': '연도별',
+                    'all': '전체'
+                }
+                selected_view = st.selectbox(
+                    "기간 선택",
+                    options=list(view_options.keys()),
+                    format_func=lambda x: view_options[x],
+                    index=list(view_options.keys()).index(st.session_state.stats_view),
+                    key="view_selector"
+                )
+                st.session_state.stats_view = selected_view
+
+            with col5:
+                if st.button("▶", key="next_period"):
+                    if st.session_state.stats_view == 'monthly':
+                        if st.session_state.stats_month == 12:
+                            st.session_state.stats_month = 1
+                            st.session_state.stats_year += 1
+                        else:
+                            st.session_state.stats_month += 1
+                    elif st.session_state.stats_view == 'yearly':
+                        st.session_state.stats_year += 1
+
+            # 현재 기간 표시
+            if st.session_state.stats_view == 'monthly':
+                period_text = f"{st.session_state.stats_year}년 {st.session_state.stats_month}월"
+            elif st.session_state.stats_view == 'yearly':
+                period_text = f"{st.session_state.stats_year}년"
+            else:
+                period_text = "전체 기간"
+
+            st.markdown(f"### 📅 {period_text}")
+
+            # 통계 계산
+            if st.session_state.stats_view == 'monthly':
+                stats = self.calculate_statistics(st.session_state.stats_year, st.session_state.stats_month)
+            elif st.session_state.stats_view == 'yearly':
+                stats = self.calculate_statistics(st.session_state.stats_year)
+            else:
+                stats = self.calculate_statistics()
+
+            if not stats:
+                st.info("통계 데이터가 없습니다.")
+                return
+
+            # 통계 카드 표시
+            st.markdown("#### 📈 기간 요약")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                profit_color = "🔴" if stats['total_profit'] >= 0 else "🔵"
+                st.metric(
+                    label="순수익",
+                    value=f"{stats['total_profit']:,.0f}원",
+                    delta=f"{stats['profit_rate']:+.2f}%"
+                )
+
+            with col2:
+                st.metric(
+                    label="수익금",
+                    value=f"{stats['profit_amount']:,.0f}원",
+                    delta=f"{stats['profit_count']}건"
+                )
+
+            with col3:
+                st.metric(
+                    label="손실금",
+                    value=f"{stats['loss_amount']:,.0f}원",
+                    delta=f"{stats['loss_count']}건"
+                )
+
+            with col4:
+                st.metric(
+                    label="총 거래",
+                    value=f"{stats['total_trades']}건",
+                    delta=f"매수 {stats['buy_count']}건"
+                )
+
+            # 승률 표시
+            col1, col2 = st.columns(2)
+            with col1:
+                win_rate = (stats['profit_count'] / stats['total_trades'] * 100) if stats['total_trades'] > 0 else 0
+                st.metric(label="승률", value=f"{win_rate:.1f}%", delta=f"{stats['profit_count']}/{stats['total_trades']}")
+            with col2:
+                avg_profit = stats['total_profit'] / stats['total_trades'] if stats['total_trades'] > 0 else 0
+                st.metric(label="평균 손익", value=f"{avg_profit:,.0f}원", delta="거래당")
+
+            st.markdown("---")
+
+            # 거래 종목 리스트
+            st.markdown("### 📋 보유 및 거래 현황")
+
+            if st.session_state.stats_view == 'monthly':
+                trades = self.get_monthly_trades(st.session_state.stats_year, st.session_state.stats_month)
+            elif st.session_state.stats_view == 'yearly':
+                trades = self.get_monthly_trades(st.session_state.stats_year)
+            else:
+                trades = self.get_monthly_trades()
+
+            # 보유중/매도완료 구분
+            holding = [t for t in trades['buys'] if t['is_sold'] == 0]
+            sold_buys = [t for t in trades['buys'] if t['is_sold'] == 1]
+
+            # 탭으로 보유중/매도완료 구분
+            tab1, tab2 = st.tabs([f"🟢 보유중 ({len(holding)})", f"✅ 매도완료 ({len(trades['sells'])})"])
+
+            with tab1:
+                st.markdown("#### 현재 보유중인 종목")
+                if holding:
+                    for trade in holding:
+                        # 현재가 대비 수익률 계산 (임시로 매수가 사용)
+                        current_price = trade.get('current_price', trade['buy_price'])
+                        unrealized_profit = (current_price - trade['buy_price']) * trade['quantity']
+                        unrealized_rate = ((current_price - trade['buy_price']) / trade['buy_price'] * 100) if trade['buy_price'] > 0 else 0
+
+                        profit_emoji = "🔴" if unrealized_profit >= 0 else "🔵"
+                        profit_sign = "+" if unrealized_profit >= 0 else ""
+
+                        with st.expander(f"{profit_emoji} **{trade['company_name']}** ({trade['ticker']}) - {trade['quantity']}주 | 평가손익 {profit_sign}{unrealized_rate:.2f}%"):
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.markdown("**매수 정보**")
+                                st.markdown(f"- 매수가: {trade['buy_price']:,.0f}원")
+                                st.markdown(f"- 매수일: {trade['buy_date'][:10] if len(trade['buy_date']) > 10 else trade['buy_date']}")
+                                st.markdown(f"- 매수금액: {trade['buy_price'] * trade['quantity']:,.0f}원")
+                            with col2:
+                                st.markdown("**현재 상태**")
+                                st.markdown(f"- 수량: {trade['quantity']}주")
+                                st.markdown(f"- 현재가: {current_price:,.0f}원")
+                                st.markdown(f"- 평가금액: {current_price * trade['quantity']:,.0f}원")
+                            with col3:
+                                st.markdown("**평가손익**")
+                                st.markdown(f"- 손익: {profit_sign}{unrealized_profit:,.0f}원")
+                                st.markdown(f"- 수익률: {profit_sign}{unrealized_rate:.2f}%")
+                                st.markdown("- 상태: 🟢 보유중")
+                else:
+                    st.info("보유중인 종목이 없습니다.")
+
+            with tab2:
+                st.markdown("#### 매도 완료된 종목")
+                if trades['sells']:
+                    # 수익/손실별 구분
+                    profits = []
+                    losses = []
+
+                    for trade in trades['sells']:
+                        profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
+                        if profit >= 0:
+                            profits.append(trade)
+                        else:
+                            losses.append(trade)
+
+                    # 수익 종목
+                    if profits:
+                        st.markdown(f"**🔴 수익 거래 ({len(profits)}건)**")
+                        for trade in profits:
+                            profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
+                            profit_rate = ((trade['sell_price'] - trade['buy_price']) / trade['buy_price'] * 100) if trade['buy_price'] > 0 else 0
+
+                            with st.expander(f"**{trade['company_name']}** ({trade['ticker']}) - +{profit_rate:.2f}% | +{profit:,.0f}원"):
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.markdown("**매수 정보**")
+                                    st.markdown(f"- 매수가: {trade['buy_price']:,.0f}원")
+                                    st.markdown(f"- 매수일: {trade['buy_date'][:10] if len(trade['buy_date']) > 10 else trade['buy_date']}")
+                                    st.markdown(f"- 매수금액: {trade['buy_price'] * trade['quantity']:,.0f}원")
+                                with col2:
+                                    st.markdown("**매도 정보**")
+                                    st.markdown(f"- 매도가: {trade['sell_price']:,.0f}원")
+                                    st.markdown(f"- 매도일: {trade['sell_date'][:10] if len(trade['sell_date']) > 10 else trade['sell_date']}")
+                                    st.markdown(f"- 매도금액: {trade['sell_price'] * trade['quantity']:,.0f}원")
+                                with col3:
+                                    st.markdown("**실현손익**")
+                                    st.markdown(f"- 손익: +{profit:,.0f}원")
+                                    st.markdown(f"- 수익률: +{profit_rate:.2f}%")
+                                    st.markdown(f"- 수량: {trade['quantity']}주")
+
+                    # 손실 종목
+                    if losses:
+                        st.markdown(f"**🔵 손실 거래 ({len(losses)}건)**")
+                        for trade in losses:
+                            profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
+                            profit_rate = ((trade['sell_price'] - trade['buy_price']) / trade['buy_price'] * 100) if trade['buy_price'] > 0 else 0
+
+                            with st.expander(f"**{trade['company_name']}** ({trade['ticker']}) - {profit_rate:.2f}% | {profit:,.0f}원"):
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.markdown("**매수 정보**")
+                                    st.markdown(f"- 매수가: {trade['buy_price']:,.0f}원")
+                                    st.markdown(f"- 매수일: {trade['buy_date'][:10] if len(trade['buy_date']) > 10 else trade['buy_date']}")
+                                    st.markdown(f"- 매수금액: {trade['buy_price'] * trade['quantity']:,.0f}원")
+                                with col2:
+                                    st.markdown("**매도 정보**")
+                                    st.markdown(f"- 매도가: {trade['sell_price']:,.0f}원")
+                                    st.markdown(f"- 매도일: {trade['sell_date'][:10] if len(trade['sell_date']) > 10 else trade['sell_date']}")
+                                    st.markdown(f"- 매도금액: {trade['sell_price'] * trade['quantity']:,.0f}원")
+                                with col3:
+                                    st.markdown("**실현손익**")
+                                    st.markdown(f"- 손익: {profit:,.0f}원")
+                                    st.markdown(f"- 수익률: {profit_rate:.2f}%")
+                                    st.markdown(f"- 수량: {trade['quantity']}주")
+                else:
+                    st.info("매도 기록이 없습니다.")
+
+            # 월별 보기일 경우 달력 표시
+            if st.session_state.stats_view == 'monthly':
+                st.markdown("---")
+                st.markdown("### 📅 일별 수익 달력")
+
+                daily_stats = self.calculate_daily_statistics(
+                    st.session_state.stats_year,
+                    st.session_state.stats_month
+                )
+
+                self.render_calendar(
+                    st.session_state.stats_year,
+                    st.session_state.stats_month,
+                    daily_stats
+                )
+
+        except Exception as e:
+            st.error(f"통계 표시 중 오류가 발생했습니다: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
     def main(self):
         """메인 애플리케이션 실행"""
         # 사이드바 디자인 개선
         st.sidebar.markdown("""
         <div class="sidebar-header">
             <div class="sidebar-logo">📊</div>
-            <div class="sidebar-title">analysis.stocksimulation.kr</div>
+            <div class="sidebar-title">프리즘 애널리틱스</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -2319,7 +2986,8 @@ streamlit run examples/streamlit/app_modern.py
             "보고서 보기": "📚",
             "매수 기록": "💰",
             "매도 기록": "📉",
-            "거래 히스토리": "📜"
+            "거래 히스토리": "📜",
+            "통계": "📊"
         }
 
         # session_state에 선택된 메뉴 저장 (초기값)
@@ -2347,7 +3015,7 @@ streamlit run examples/streamlit/app_modern.py
         st.sidebar.markdown("---")
         st.sidebar.markdown("#### 서비스 정보")
         st.sidebar.markdown("버전: v1.0.3")
-        st.sidebar.markdown("© 2025 https://analysis.stocksimulation.kr")
+        st.sidebar.markdown("© 2025 프리즘 애널리틱스 (https://analysis.stocksimulation.kr)")
 
         # 메인 콘텐츠 렌더링
         if menu == "분석 요청":
@@ -2360,6 +3028,8 @@ streamlit run examples/streamlit/app_modern.py
             self.render_sell_records()
         elif menu == "거래 히스토리":
             self.render_transaction_history()
+        elif menu == "통계":
+            self.render_statistics()
 
 if __name__ == "__main__":
     app = ModernStockAnalysisApp()

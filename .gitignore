@@ -35,3 +35,15 @@ trading/config/kis_*.yaml
 examples/dashboard/build/
 examples/dashboard/dist/
 examples/dashboard/node_modules/
+
+# Analysis runtime files
+analysis_status/
+analysis_summary/
+reports/
+
+# Backup files
+*.backup
+*~
+
+# Test/dummy data
+generate_dummy_data.py
