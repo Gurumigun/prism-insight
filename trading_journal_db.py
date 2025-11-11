@@ -93,6 +93,73 @@ class TradingJournalDB:
         self.conn.commit()
         logger.info("데이터베이스 테이블 생성 완료")
 
+        # 기존 테이블에 UNIQUE 제약이 있는 경우 마이그레이션
+        self._migrate_remove_unique_constraint()
+
+    def _migrate_remove_unique_constraint(self):
+        """
+        기존 stock_holdings 테이블의 ticker UNIQUE 제약 제거
+        (여러 번 매수를 지원하기 위해)
+        """
+        try:
+            # 기존 테이블 구조 확인
+            self.cursor.execute("PRAGMA table_info(stock_holdings)")
+            columns = self.cursor.fetchall()
+
+            # UNIQUE 제약이 있는지 확인
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
+            result = self.cursor.fetchone()
+
+            if result and 'UNIQUE' in result[0]:
+                logger.info("UNIQUE 제약이 발견되어 마이그레이션을 시작합니다...")
+
+                # 기존 데이터 백업
+                self.cursor.execute("""
+                    CREATE TEMP TABLE stock_holdings_backup AS
+                    SELECT * FROM stock_holdings
+                """)
+
+                # 기존 테이블 삭제
+                self.cursor.execute("DROP TABLE stock_holdings")
+
+                # 새 테이블 생성 (UNIQUE 제약 없이)
+                self.cursor.execute("""
+                    CREATE TABLE stock_holdings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ticker TEXT NOT NULL,
+                        company_name TEXT NOT NULL,
+                        buy_price REAL NOT NULL,
+                        buy_date TEXT NOT NULL,
+                        quantity INTEGER DEFAULT 1,
+                        current_price REAL,
+                        last_updated TEXT,
+                        scenario TEXT,
+                        rsi REAL,
+                        macd REAL,
+                        adr REAL,
+                        market_kospi_adr REAL,
+                        market_kosdaq_adr REAL,
+                        is_sold INTEGER DEFAULT 0,
+                        sell_price REAL,
+                        sell_date TEXT
+                    )
+                """)
+
+                # 데이터 복원
+                self.cursor.execute("""
+                    INSERT INTO stock_holdings
+                    SELECT * FROM stock_holdings_backup
+                """)
+
+                # 임시 테이블 삭제
+                self.cursor.execute("DROP TABLE stock_holdings_backup")
+
+                self.conn.commit()
+                logger.info("✅ 마이그레이션 완료: UNIQUE 제약 제거됨. 이제 같은 종목을 여러 번 매수할 수 있습니다.")
+
+        except Exception as e:
+            logger.warning(f"마이그레이션 중 오류 (무시 가능): {str(e)}")
+
     def _get_current_price(self, ticker: str) -> Optional[float]:
         """
         pykrx를 사용하여 실시간 현재가 조회
