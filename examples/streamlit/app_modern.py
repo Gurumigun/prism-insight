@@ -1468,6 +1468,9 @@ asyncio.run(run())
                         st.markdown("### 📋 요약 테이블")
                         df_data = []
                         for agg in aggregated:
+                            total_value = agg['current_price'] * agg['total_quantity']
+                            net_profit = total_value - agg['total_cost']
+
                             df_data.append({
                                 '종목명': agg['company_name'],
                                 '종목코드': agg['ticker'],
@@ -1475,7 +1478,8 @@ asyncio.run(run())
                                 '현재가': f"{agg['current_price']:,.0f}원",
                                 '총 수량': f"{agg['total_quantity']}주",
                                 '매수 횟수': f"{agg['buy_count']}회",
-                                '수익률': f"{agg['profit_rate']:+.2f}%"
+                                '수익률': f"{agg['profit_rate']:+.2f}%",
+                                '순수익': f"{net_profit:+,.0f}원"
                             })
 
                         df = pd.DataFrame(df_data)
@@ -1776,107 +1780,136 @@ asyncio.run(run())
             st.markdown("---")
             st.markdown("## 📜 과거 매도 내역")
 
-            # 과거 매도 기록 조회
+            # 과거 매도 기록 조회 (stock_holdings에서 is_sold=1인 것들)
             with TradingJournalDB(db_path) as db:
-                # 전체 매도 기록 조회
-                history = db.get_trading_history(limit=9999)
+                # is_sold=1인 레코드 조회
+                db.cursor.execute("""
+                    SELECT
+                        id, ticker, company_name, buy_price, buy_date, quantity,
+                        sell_price, sell_date, rsi, macd, adr,
+                        market_kospi_adr, market_kosdaq_adr, scenario
+                    FROM stock_holdings
+                    WHERE is_sold = 1
+                    ORDER BY sell_date DESC
+                """)
 
-                if not history:
+                sold_records = db.cursor.fetchall()
+
+                if not sold_records:
                     st.info("📭 매도 기록이 없습니다.")
-                    return
+                else:
+                    # 통계 정보
+                    total_trades = len(sold_records)
+                    profitable = sum(1 for r in sold_records if r['sell_price'] > r['buy_price'])
+                    losing = total_trades - profitable
+                    win_rate = (profitable / total_trades * 100) if total_trades > 0 else 0
+                    avg_profit_rate = sum(((r['sell_price'] - r['buy_price']) / r['buy_price'] * 100) for r in sold_records) / total_trades if total_trades > 0 else 0
 
-                # 통계 정보
-                stats = db.get_statistics()
-                col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("총 거래", f"{total_trades}건")
+                    with col2:
+                        st.metric("수익 거래", f"{profitable}건", delta=f"{win_rate:.1f}% 승률")
+                    with col3:
+                        st.metric("손실 거래", f"{losing}건")
+                    with col4:
+                        st.metric("평균 수익률", f"{avg_profit_rate:+.2f}%")
 
-                with col1:
-                    st.metric("총 거래", f"{stats.get('total_trades', 0)}건")
-                with col2:
-                    st.metric("수익 거래", f"{stats.get('profitable_trades', 0)}건",
-                             delta=f"{stats.get('win_rate', 0):.1f}% 승률")
-                with col3:
-                    st.metric("손실 거래", f"{stats.get('losing_trades', 0)}건")
-                with col4:
-                    st.metric("평균 수익률", f"{stats.get('avg_profit_rate', 0):+.2f}%")
+                    st.markdown("---")
 
-                st.markdown("---")
+                    # 정렬 옵션
+                    st.markdown("### 💰 매도 내역")
+                    col1, col2 = st.columns([3, 1])
+                    with col2:
+                        sort_option = st.selectbox(
+                            "정렬 기준",
+                            ["매도일 (최신순)", "매도일 (오래된순)", "수익률 (높은순)", "수익률 (낮은순)"],
+                            index=0
+                        )
 
-                # 정렬 옵션
-                st.markdown("### 💰 매도 내역")
-                col1, col2 = st.columns([3, 1])
-                with col2:
-                    sort_option = st.selectbox(
-                        "정렬 기준",
-                        ["매도일 (오래된순)", "매도일 (최신순)", "수익률 (높은순)", "수익률 (낮은순)", "보유기간 (긴순)", "보유기간 (짧은순)"],
-                        index=0
-                    )
+                    # 정렬 적용
+                    sold_list = [dict(r) for r in sold_records]
+                    if sort_option == "매도일 (최신순)":
+                        sold_list.sort(key=lambda x: x['sell_date'], reverse=True)
+                    elif sort_option == "매도일 (오래된순)":
+                        sold_list.sort(key=lambda x: x['sell_date'])
+                    elif sort_option == "수익률 (높은순)":
+                        sold_list.sort(key=lambda x: ((x['sell_price'] - x['buy_price']) / x['buy_price'] * 100), reverse=True)
+                    elif sort_option == "수익률 (낮은순)":
+                        sold_list.sort(key=lambda x: ((x['sell_price'] - x['buy_price']) / x['buy_price'] * 100))
 
-                # 정렬 적용
-                if sort_option == "매도일 (오래된순)":
-                    history.sort(key=lambda x: x['sell_date'])
-                elif sort_option == "매도일 (최신순)":
-                    history.sort(key=lambda x: x['sell_date'], reverse=True)
-                elif sort_option == "수익률 (높은순)":
-                    history.sort(key=lambda x: x['profit_rate'], reverse=True)
-                elif sort_option == "수익률 (낮은순)":
-                    history.sort(key=lambda x: x['profit_rate'])
-                elif sort_option == "보유기간 (긴순)":
-                    history.sort(key=lambda x: x['holding_days'], reverse=True)
-                elif sort_option == "보유기간 (짧은순)":
-                    history.sort(key=lambda x: x['holding_days'])
+                    st.markdown(f"**총 {len(sold_list)}건의 거래 내역**")
 
-                st.markdown(f"**총 {len(history)}건의 거래 내역**")
+                    for idx, trade in enumerate(sold_list, 1):
+                        profit_rate = ((trade['sell_price'] - trade['buy_price']) / trade['buy_price'] * 100)
+                        net_profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
 
-                for idx, trade in enumerate(history, 1):
-                    profit_rate = trade['profit_rate']
-                    if profit_rate > 0:
-                        color = "green"
-                        emoji = "✅"
-                        result = "수익"
-                    else:
-                        color = "red"
-                        emoji = "❌"
-                        result = "손실"
+                        if profit_rate > 0:
+                            color = "green"
+                            emoji = "✅"
+                            result = "수익"
+                        else:
+                            color = "red"
+                            emoji = "❌"
+                            result = "손실"
 
-                    with st.expander(f"{emoji} {trade['company_name']} ({trade['ticker']}) - {result}: {profit_rate:+.2f}%", expanded=(idx <= 5)):
-                        col1, col2 = st.columns(2)
+                        with st.expander(
+                            f"{emoji} {trade['company_name']} ({trade['ticker']}) - {result}: {profit_rate:+.2f}% | 순수익: {net_profit:+,.0f}원",
+                            expanded=(idx <= 5)
+                        ):
+                            col1, col2, col3 = st.columns(3)
 
-                        with col1:
-                            st.markdown(f"**매수가:** {trade['buy_price']:,.0f}원")
-                            st.markdown(f"**매도가:** {trade['sell_price']:,.0f}원")
-                            st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                            with col1:
+                                st.markdown("#### 💰 거래 정보")
+                                st.markdown(f"**매수가:** {trade['buy_price']:,.0f}원")
+                                st.markdown(f"**매도가:** {trade['sell_price']:,.0f}원")
+                                st.markdown(f"**수량:** {trade['quantity']}주")
+                                st.markdown(f"**투자금액:** {trade['buy_price'] * trade['quantity']:,.0f}원")
 
-                        with col2:
-                            st.markdown(f"**매수일:** {trade['buy_date']}")
-                            st.markdown(f"**매도일:** {trade['sell_date']}")
-                            st.markdown(f"**보유기간:** {trade['holding_days']}일")
+                            with col2:
+                                st.markdown("#### 📊 수익 분석")
+                                st.markdown(f"**매수일:** {trade['buy_date']}")
+                                st.markdown(f"**매도일:** {trade['sell_date']}")
+                                st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                                st.markdown(f"**순수익:** :{color}[{net_profit:+,.0f}원]")
 
-                        # 시나리오 정보
-                        if trade.get('scenario'):
-                            try:
-                                scenario = json.loads(trade['scenario']) if isinstance(trade['scenario'], str) else trade['scenario']
-                                st.markdown("**투자 정보:**")
-                                st.markdown(f"- 투자 기간: {scenario.get('investment_period', '중기')}")
-                                st.markdown(f"- 산업군: {scenario.get('sector', '알 수 없음')}")
-                            except:
-                                pass
+                            with col3:
+                                st.markdown("#### 📈 매수 당시 지표")
+                                st.markdown(f"**RSI:** {trade.get('rsi', 0):.2f}" if trade.get('rsi') else "**RSI:** N/A")
+                                st.markdown(f"**MACD:** {trade.get('macd', 0):.2f}" if trade.get('macd') else "**MACD:** N/A")
+                                st.markdown(f"**종목 ADR:** {trade.get('adr', 0):.2f}" if trade.get('adr') else "**종목 ADR:** N/A")
 
-                # 데이터프레임으로도 표시
-                st.markdown("### 📋 거래 내역 테이블")
-                df_data = []
-                for trade in history:
-                    df_data.append({
-                        '종목명': trade['company_name'],
-                        '종목코드': trade['ticker'],
-                        '매수가': f"{trade['buy_price']:,.0f}원",
-                        '매도가': f"{trade['sell_price']:,.0f}원",
-                        '수익률': f"{trade['profit_rate']:+.2f}%",
-                        '보유기간': f"{trade['holding_days']}일",
-                        '매도일': trade['sell_date'].split()[0]
-                    })
+                            # 투자 근거
+                            if trade.get('scenario'):
+                                try:
+                                    scenario = json.loads(trade['scenario']) if isinstance(trade['scenario'], str) else trade['scenario']
+                                    if scenario.get('rationale') and scenario.get('rationale') != "미입력":
+                                        st.markdown("---")
+                                        st.markdown(f"💡 **투자 근거:** {scenario.get('rationale')}")
+                                except:
+                                    pass
 
-                df = pd.DataFrame(df_data)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                    # 데이터프레임으로도 표시
+                    st.markdown("### 📋 거래 내역 테이블")
+                    df_data = []
+                    for trade in sold_list:
+                        profit_rate = ((trade['sell_price'] - trade['buy_price']) / trade['buy_price'] * 100)
+                        net_profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
+
+                        df_data.append({
+                            '종목명': trade['company_name'],
+                            '종목코드': trade['ticker'],
+                            '매수가': f"{trade['buy_price']:,.0f}원",
+                            '매도가': f"{trade['sell_price']:,.0f}원",
+                            '수량': f"{trade['quantity']}주",
+                            '수익률': f"{profit_rate:+.2f}%",
+                            '순수익': f"{net_profit:+,.0f}원",
+                            '매수일': trade['buy_date'].split()[0] if ' ' in trade['buy_date'] else trade['buy_date'],
+                            '매도일': trade['sell_date'].split()[0] if ' ' in trade['sell_date'] else trade['sell_date']
+                        })
+
+                    df = pd.DataFrame(df_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
 
         except Exception as e:
             st.error(f"매도 기록 조회 중 오류가 발생했습니다: {str(e)}")
@@ -1991,7 +2024,7 @@ asyncio.run(run())
                         status_badge = "⚫ 매도 완료"
 
                     with st.expander(
-                        f"{emoji} {trans['company_name']} ({trans['ticker']}) | {status_badge} | 수익률: {profit_rate:+.2f}%",
+                        f"{emoji} {trans['company_name']} ({trans['ticker']}) | {status_badge} | 수익률: {profit_rate:+.2f}% | 순수익: {profit_loss:+,.0f}원",
                         expanded=(idx <= 5)
                     ):
                         col1, col2, col3 = st.columns(3)
@@ -2040,6 +2073,7 @@ asyncio.run(run())
                     status = trans['status']
                     current_price = trans['current_price']
                     profit_rate = ((current_price - trans['buy_price']) / trans['buy_price'] * 100)
+                    net_profit = (current_price - trans['buy_price']) * trans['quantity']
 
                     df_data.append({
                         '상태': '🔵 보유' if status == 'HOLDING' else '⚫ 매도',
@@ -2049,6 +2083,7 @@ asyncio.run(run())
                         '현재/매도가': f"{current_price:,.0f}원",
                         '수량': f"{trans['quantity']}주",
                         '수익률': f"{profit_rate:+.2f}%",
+                        '순수익': f"{net_profit:+,.0f}원",
                         '매수일': trans['buy_date'].split()[0] if ' ' in trans['buy_date'] else trans['buy_date']
                     })
 

@@ -324,13 +324,17 @@ class TradingJournalDB:
 
                 buy_price = row_dict.get('buy_price', 0)
                 current_price = row_dict.get('current_price', 0)
+                quantity = row_dict.get('quantity', 0)
 
                 if buy_price > 0 and current_price > 0:
                     profit_rate = ((current_price - buy_price) / buy_price) * 100
+                    net_profit = (current_price - buy_price) * quantity
                 else:
                     profit_rate = 0.0
+                    net_profit = 0.0
 
                 row_dict['profit_rate'] = profit_rate
+                row_dict['net_profit'] = net_profit
                 transactions.append(row_dict)
 
             return transactions
