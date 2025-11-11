@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from pathlib import Path
 import markdown
@@ -924,39 +924,121 @@ asyncio.run(run())
         filename = f"{file_path.stem}.{extension}"
         return f'<a href="data:file/{extension};base64,{b64}" download="{filename}">💾 {extension.upper()} 형식으로 다운로드</a>'
 
-    def get_stock_info(self, ticker):
-        """종목 정보 조회"""
+    def calculate_rsi(self, df, period=14):
+        """RSI 계산"""
+        try:
+            close = df['종가']
+            delta = close.diff()
+
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+
+            return round(rsi.iloc[-1], 2) if not rsi.empty else None
+        except:
+            return None
+
+    def calculate_macd(self, df):
+        """MACD 계산"""
+        try:
+            close = df['종가']
+            exp1 = close.ewm(span=12, adjust=False).mean()
+            exp2 = close.ewm(span=26, adjust=False).mean()
+            macd = exp1 - exp2
+
+            return round(macd.iloc[-1], 2) if not macd.empty else None
+        except:
+            return None
+
+    def calculate_adr(self, df, period=20):
+        """ADR (Average Daily Range) 계산"""
+        try:
+            high_low = df['고가'] - df['저가']
+            adr = high_low.rolling(window=period).mean()
+
+            return round(adr.iloc[-1], 2) if not adr.empty else None
+        except:
+            return None
+
+    def calculate_market_adr(self, date_str, period=20):
+        """코스피/코스닥 시장 ADR 계산"""
+        try:
+            # 날짜 파싱
+            target_date = datetime.strptime(date_str, "%Y%m%d")
+            start_date = (target_date - timedelta(days=period + 30)).strftime("%Y%m%d")  # 여유있게
+            end_date = date_str
+
+            # 코스피 지수 데이터
+            kospi_df = stock.get_index_ohlcv(start_date, end_date, "1001")  # 코스피
+            kosdaq_df = stock.get_index_ohlcv(start_date, end_date, "2001")  # 코스닥
+
+            kospi_adr = None
+            kosdaq_adr = None
+
+            if not kospi_df.empty and len(kospi_df) >= period:
+                high_low = kospi_df['고가'] - kospi_df['저가']
+                adr_series = high_low.rolling(window=period).mean()
+                kospi_adr = round(adr_series.iloc[-1], 2) if not adr_series.empty else None
+
+            if not kosdaq_df.empty and len(kosdaq_df) >= period:
+                high_low = kosdaq_df['고가'] - kosdaq_df['저가']
+                adr_series = high_low.rolling(window=period).mean()
+                kosdaq_adr = round(adr_series.iloc[-1], 2) if not adr_series.empty else None
+
+            return kospi_adr, kosdaq_adr
+
+        except Exception as e:
+            print(f"시장 ADR 계산 실패: {str(e)}")
+            return None, None
+
+    def get_stock_info(self, ticker, target_date=None):
+        """종목 정보 조회 및 기술적 지표 계산
+
+        Args:
+            ticker: 종목코드
+            target_date: 기준일 (datetime 객체 또는 None). None이면 오늘 날짜 사용
+        """
         if stock is None:
-            return None, None, None
+            return None, None, None, None, None, None
 
         try:
-            from datetime import timedelta
-
             # 종목명 조회
             stock_name = stock.get_market_ticker_name(ticker)
             if not stock_name:
-                return None, None, None
+                return None, None, None, None, None, None
 
-            # 현재가 조회 (최근 영업일)
-            today = datetime.now()
-            end_date = today.strftime("%Y%m%d")
-            start_date = (today - timedelta(days=7)).strftime("%Y%m%d")
+            # 기준일 설정
+            if target_date is None:
+                target_date = datetime.now()
+            elif isinstance(target_date, str):
+                target_date = datetime.strptime(target_date, "%Y%m%d")
+
+            # 현재가 조회 (기준일 기준)
+            end_date = target_date.strftime("%Y%m%d")
+            start_date = (target_date - timedelta(days=7)).strftime("%Y%m%d")
 
             df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
             if df.empty:
-                return stock_name, None, None
+                return stock_name, None, None, None, None, None
 
             current_price = df.iloc[-1]['종가']
 
-            # 차트 데이터 (최근 60일)
-            chart_start = (today - timedelta(days=90)).strftime("%Y%m%d")
+            # 차트 데이터 (기준일로부터 과거 150일 - 기술적 지표 계산을 위해 더 많은 데이터 필요)
+            chart_start = (target_date - timedelta(days=150)).strftime("%Y%m%d")
             chart_df = stock.get_market_ohlcv_by_date(chart_start, end_date, ticker)
 
-            return stock_name, current_price, chart_df
+            # 기술적 지표 계산
+            rsi = self.calculate_rsi(chart_df)
+            macd = self.calculate_macd(chart_df)
+            adr = self.calculate_adr(chart_df)
+
+            return stock_name, current_price, chart_df, rsi, macd, adr
 
         except Exception as e:
             st.error(f"종목 정보 조회 실패: {str(e)}")
-            return None, None, None
+            return None, None, None, None, None, None
 
     def create_stock_chart(self, df, stock_name):
         """주가 차트 생성"""
@@ -998,40 +1080,46 @@ asyncio.run(run())
 
         return fig
 
-    def save_buy_record(self, ticker, company_name, buy_price, target_price, stop_loss, reason):
+    def save_buy_record(self, ticker, company_name, buy_price, buy_date, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
         """매수 기록 저장"""
         try:
-            import sqlite3
-            db_path = project_root + "/stock_tracking_db.sqlite"
+            # 데이터베이스 경로를 project_root로 명시
+            db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
 
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
+            # TradingJournalDB를 사용하여 저장
+            with TradingJournalDB(db_path) as db:
+                # buy_date가 date 객체인 경우 문자열로 변환
+                if hasattr(buy_date, 'strftime'):
+                    buy_date_str = buy_date.strftime("%Y-%m-%d")
+                else:
+                    buy_date_str = str(buy_date)
 
-            # stock_holdings 테이블에 INSERT
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                scenario = {
+                    "rationale": reason if reason else "미입력",
+                    "investment_period": "중기",
+                    "sector": "기타"
+                }
 
-            scenario = {
-                "rationale": reason if reason else "미입력",
-                "investment_period": "중기",
-                "sector": "기타"
-            }
+                success = db.add_position(
+                    ticker=ticker,
+                    company_name=company_name,
+                    buy_price=buy_price,
+                    buy_date=buy_date_str,
+                    quantity=quantity,
+                    rsi=rsi,
+                    macd=macd,
+                    adr=adr,
+                    market_kospi_adr=market_kospi_adr,
+                    market_kosdaq_adr=market_kosdaq_adr,
+                    scenario=json.dumps(scenario, ensure_ascii=False)
+                )
 
-            cursor.execute("""
-                INSERT INTO stock_holdings
-                (ticker, company_name, buy_price, buy_date, current_price,
-                 target_price, stop_loss, scenario, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                ticker, company_name, buy_price, now, buy_price,
-                target_price, stop_loss, json.dumps(scenario, ensure_ascii=False), now
-            ))
+                return success
 
-            conn.commit()
-            conn.close()
-
-            return True
         except Exception as e:
             st.error(f"저장 실패: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
             return False
 
     def render_buy_records(self):
@@ -1067,17 +1155,26 @@ asyncio.run(run())
                 if not re.match(r'^\d{6}$', ticker_input):
                     st.error("올바른 종목코드를 입력해주세요 (6자리 숫자)")
                 else:
-                    with st.spinner("종목 정보를 조회하고 있습니다..."):
-                        stock_name, current_price, chart_df = self.get_stock_info(ticker_input)
+                    with st.spinner("종목 정보 및 기술적 지표를 계산하고 있습니다..."):
+                        stock_name, current_price, chart_df, rsi, macd, adr = self.get_stock_info(ticker_input)
 
                         if stock_name is None:
                             st.error("종목을 찾을 수 없습니다. 종목코드를 확인해주세요.")
                         else:
+                            # 시장 ADR 계산 (당일 기준)
+                            today_str = datetime.now().strftime("%Y%m%d")
+                            kospi_adr, kosdaq_adr = self.calculate_market_adr(today_str)
+
                             # 세션 상태에 저장
                             st.session_state.searched_ticker = ticker_input
                             st.session_state.searched_name = stock_name
                             st.session_state.searched_price = current_price
                             st.session_state.searched_chart = chart_df
+                            st.session_state.searched_rsi = rsi
+                            st.session_state.searched_macd = macd
+                            st.session_state.searched_adr = adr
+                            st.session_state.searched_kospi_adr = kospi_adr
+                            st.session_state.searched_kosdaq_adr = kosdaq_adr
 
             # 종목 정보가 있으면 표시
             if hasattr(st.session_state, 'searched_ticker'):
@@ -1085,6 +1182,11 @@ asyncio.run(run())
                 stock_name = st.session_state.searched_name
                 current_price = st.session_state.searched_price
                 chart_df = st.session_state.searched_chart
+                rsi_value = st.session_state.get('searched_rsi', 0)
+                macd_value = st.session_state.get('searched_macd', 0)
+                adr_value = st.session_state.get('searched_adr', 0)
+                kospi_adr_value = st.session_state.get('searched_kospi_adr', 0)
+                kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
 
                 st.success(f"✅ 종목 조회 완료: {stock_name} ({ticker})")
 
@@ -1100,110 +1202,295 @@ asyncio.run(run())
                     else:
                         st.metric("현재가", "조회 실패")
 
-                # 차트 표시
-                if chart_df is not None and not chart_df.empty:
-                    st.markdown("#### 📈 주가 차트 (최근 60일)")
-                    fig = self.create_stock_chart(chart_df, stock_name)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                st.markdown("---")
+
+                # 매수 정보 입력 폼 (차트 위로 이동)
+                st.markdown("### 💰 매수 정보 입력")
+
+                # 기술적 지표 현재 값 표시 (읽기 전용)
+                st.markdown("#### 📊 자동 계산된 기술적 지표")
+                ind_col1, ind_col2, ind_col3, ind_col4, ind_col5 = st.columns(5)
+                with ind_col1:
+                    st.metric("RSI", f"{rsi_value:.2f}" if rsi_value else "N/A", help="상대강도지수 (0~100)")
+                with ind_col2:
+                    st.metric("MACD", f"{macd_value:.2f}" if macd_value else "N/A", help="이동평균수렴확산지수")
+                with ind_col3:
+                    st.metric("종목 ADR", f"{adr_value:.2f}" if adr_value else "N/A", help="평균 일일 변동폭")
+                with ind_col4:
+                    st.metric("코스피 ADR", f"{kospi_adr_value:.2f}" if kospi_adr_value else "N/A", help="코스피 시장 ADR")
+                with ind_col5:
+                    st.metric("코스닥 ADR", f"{kosdaq_adr_value:.2f}" if kosdaq_adr_value else "N/A", help="코스닥 시장 ADR")
 
                 st.markdown("---")
 
-                # 매수 정보 입력 폼
-                st.markdown("### 💰 매수 정보 입력")
+                # 날짜 선택 및 재계산 영역 (form 외부)
+                st.markdown("#### 📅 매수일 선택")
+                date_col1, date_col2 = st.columns([2, 1])
+                with date_col1:
+                    selected_date = st.date_input(
+                        "매수일을 선택하세요",
+                        value=datetime.now(),
+                        max_value=datetime.now(),
+                        help="매수한 날짜를 선택하면 해당 날짜의 기술적 지표를 계산할 수 있습니다",
+                        key="date_selector"
+                    )
+                with date_col2:
+                    st.markdown("")  # 여백
+                    recalc_button = st.button(
+                        "📊 이 날짜로 지표 재계산",
+                        use_container_width=True,
+                        type="secondary"
+                    )
+
+                # 재계산 버튼이 눌렸을 때
+                if recalc_button:
+                    with st.spinner(f"📅 {selected_date.strftime('%Y-%m-%d')} 기준 기술적 지표를 계산하고 있습니다..."):
+                        # 해당 날짜 기준으로 기술적 지표 재계산
+                        _, price_at_date, chart_df_date, rsi_date, macd_date, adr_date = self.get_stock_info(
+                            ticker,
+                            selected_date
+                        )
+
+                        if price_at_date:
+                            # 시장 ADR도 해당 날짜 기준으로 재계산
+                            date_str = selected_date.strftime("%Y%m%d")
+                            kospi_adr_date, kosdaq_adr_date = self.calculate_market_adr(date_str)
+
+                            # 세션 상태 업데이트
+                            st.session_state.searched_price = price_at_date
+                            st.session_state.searched_chart = chart_df_date
+                            st.session_state.searched_rsi = rsi_date
+                            st.session_state.searched_macd = macd_date
+                            st.session_state.searched_adr = adr_date
+                            st.session_state.searched_kospi_adr = kospi_adr_date
+                            st.session_state.searched_kosdaq_adr = kosdaq_adr_date
+
+                            st.success(f"✅ {selected_date.strftime('%Y-%m-%d')} 기준 지표가 업데이트되었습니다!")
+                            st.rerun()
+                        else:
+                            st.error("❌ 해당 날짜의 데이터를 가져올 수 없습니다. 영업일을 선택해주세요.")
+
+                # 현재 세션 상태의 값 다시 읽기
+                current_price = st.session_state.searched_price
+                rsi_value = st.session_state.get('searched_rsi', 0)
+                macd_value = st.session_state.get('searched_macd', 0)
+                adr_value = st.session_state.get('searched_adr', 0)
+                kospi_adr_value = st.session_state.get('searched_kospi_adr', 0)
+                kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
+
+                st.markdown("---")
 
                 with st.form("buy_record_form"):
+                    st.markdown("#### 💵 거래 정보")
+                    # 첫 번째 행: 매수가, 수량
                     col1, col2 = st.columns(2)
-
                     with col1:
                         buy_price = st.number_input(
-                            "매수가 (원) *",
+                            "💰 매수가 (원) *",
                             min_value=1,
                             value=int(current_price) if current_price else 0,
                             step=100,
                             help="실제 매수한 가격을 입력해주세요"
                         )
-
-                        target_price = st.number_input(
-                            "목표가 (원)",
-                            min_value=1,
-                            value=int(buy_price * 1.1) if buy_price > 0 else 0,
-                            step=100,
-                            help="매도 목표가격 (기본: 매수가의 110%)"
-                        )
-
                     with col2:
-                        buy_date = st.date_input(
-                            "매수일 *",
-                            value=datetime.now(),
-                            max_value=datetime.now()
-                        )
-
-                        stop_loss = st.number_input(
-                            "손절가 (원)",
+                        quantity = st.number_input(
+                            "📦 매수 수량 *",
                             min_value=1,
-                            value=int(buy_price * 0.95) if buy_price > 0 else 0,
-                            step=100,
-                            help="손절가격 (기본: 매수가의 95%)"
+                            value=1,
+                            step=1,
+                            help="매수한 주식 수량"
                         )
 
-                    # 매수 이유 (선택사항)
+                    # 매수일은 form 위에서 선택한 날짜 사용
+                    buy_date = selected_date
+
+                    st.markdown("#### 📈 기술적 지표 (수정 가능)")
+                    # 두 번째 행: 기술적 지표
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        rsi = st.number_input(
+                            "RSI",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=float(rsi_value) if rsi_value else 50.0,
+                            step=0.1,
+                            help="상대강도지수 (0~100)"
+                        )
+                    with col2:
+                        macd = st.number_input(
+                            "MACD",
+                            value=float(macd_value) if macd_value else 0.0,
+                            step=0.1,
+                            help="이동평균수렴확산지수"
+                        )
+                    with col3:
+                        adr = st.number_input(
+                            "종목 ADR",
+                            min_value=0.0,
+                            value=float(adr_value) if adr_value else 0.0,
+                            step=0.1,
+                            help="평균 일일 변동폭"
+                        )
+                    with col4:
+                        market_kospi_adr = st.number_input(
+                            "코스피 ADR",
+                            min_value=0.0,
+                            value=float(kospi_adr_value) if kospi_adr_value else 0.0,
+                            step=0.1,
+                            help="코스피 시장 ADR"
+                        )
+                    with col5:
+                        market_kosdaq_adr = st.number_input(
+                            "코스닥 ADR",
+                            min_value=0.0,
+                            value=float(kosdaq_adr_value) if kosdaq_adr_value else 0.0,
+                            step=0.1,
+                            help="코스닥 시장 ADR"
+                        )
+
+                    st.markdown("#### 📝 투자 근거 (선택사항)")
+                    # 매수 이유
                     reason = st.text_area(
-                        "매수 이유 (선택사항)",
+                        "매수 이유",
                         placeholder="이 종목을 매수한 이유를 간단히 작성해주세요...",
-                        height=100
+                        height=100,
+                        label_visibility="collapsed"
                     )
 
                     # 제출 버튼
+                    st.markdown("")  # 간격 추가
+                    st.markdown(f"**선택된 매수일:** {buy_date.strftime('%Y년 %m월 %d일')}")
+                    st.markdown("")  # 간격 추가
+
                     col1, col2, col3 = st.columns([1, 1, 1])
                     with col2:
                         submitted = st.form_submit_button("💾 매수 기록 저장", use_container_width=True, type="primary")
 
                     if submitted:
                         if buy_price <= 0:
-                            st.error("매수가를 입력해주세요.")
+                            st.error("❌ 매수가를 입력해주세요.")
+                        elif quantity <= 0:
+                            st.error("❌ 매수 수량을 입력해주세요.")
                         else:
-                            # 저장
-                            if self.save_buy_record(ticker, stock_name, buy_price, target_price, stop_loss, reason):
-                                st.success(f"✅ {stock_name}({ticker}) 매수 기록이 저장되었습니다!")
-                                # 세션 상태 초기화
-                                del st.session_state.searched_ticker
-                                del st.session_state.searched_name
-                                del st.session_state.searched_price
-                                del st.session_state.searched_chart
-                                st.rerun()
+                            # 저장 - buy_date를 전달
+                            if self.save_buy_record(ticker, stock_name, buy_price, buy_date, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
+                                st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
+                                st.info("💡 새로운 종목을 등록하려면 위에서 종목코드를 다시 입력하세요.")
+                                # 세션 상태 초기화 - 모든 관련 상태 제거
+                                for key in ['searched_ticker', 'searched_name', 'searched_price', 'searched_chart',
+                                           'searched_rsi', 'searched_macd', 'searched_adr',
+                                           'searched_kospi_adr', 'searched_kosdaq_adr', 'date_selector']:
+                                    if key in st.session_state:
+                                        del st.session_state[key]
+                                # rerun 없이 상태만 초기화하여 사용자가 계속 작업할 수 있도록 함
+                                # st.rerun()을 제거하여 form이 정상적으로 리셋되도록 함
+
+                st.markdown("---")
+
+                # 차트 표시 (매수 정보 입력 아래로 이동)
+                if chart_df is not None and not chart_df.empty:
+                    st.markdown("#### 📈 주가 차트 (최근 100일)")
+                    fig = self.create_stock_chart(chart_df, stock_name)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
 
         # 탭 2: 보유 종목 조회
         with tab2:
             st.markdown("### 💼 보유 종목 조회")
 
-            try:
-                with TradingJournalDB() as db:
-                    positions = db.get_open_positions()
+            # 현재가 업데이트 버튼
+            col1, col2 = st.columns([5, 1])
+            with col2:
+                refresh_button = st.button("🔄 현재가 업데이트", use_container_width=True)
 
-                    if not positions:
+            try:
+                # 데이터베이스 경로를 project_root로 명시
+                db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+                # 현재가 업데이트가 요청되었을 때
+                if refresh_button and stock is not None:
+                    with st.spinner("현재가를 업데이트하고 있습니다..."):
+                        with TradingJournalDB(db_path) as db:
+                            # 모든 보유 종목의 ticker를 가져옴
+                            positions = db.get_open_positions()
+                            tickers = list(set([p['ticker'] for p in positions]))
+
+                            # 각 ticker의 현재가를 가져와서 업데이트
+                            updated_count = 0
+                            for ticker in tickers:
+                                try:
+                                    # 현재가 조회
+                                    end_date = datetime.now().strftime("%Y%m%d")
+                                    start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+                                    df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                    if not df.empty:
+                                        current_price = df['종가'].iloc[-1]
+
+                                        # 해당 ticker의 모든 레코드 업데이트
+                                        db.cursor.execute("""
+                                            UPDATE stock_holdings
+                                            SET current_price = ?, last_updated = ?
+                                            WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+                                        """, (current_price, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ticker))
+                                        updated_count += 1
+                                except Exception as e:
+                                    # 개별 종목 업데이트 실패는 무시하고 계속 진행
+                                    continue
+
+                            db.conn.commit()
+                            st.success(f"✅ {updated_count}개 종목의 현재가가 업데이트되었습니다!")
+
+                with TradingJournalDB(db_path) as db:
+                    aggregated = db.get_aggregated_positions()
+
+                    if not aggregated:
                         st.info("📭 현재 보유 중인 종목이 없습니다.")
                     else:
                         # 통계 정보 표시
                         col1, col2, col3, col4 = st.columns(4)
 
                         with col1:
-                            st.metric("보유 종목 수", f"{len(positions)}개")
+                            st.metric("보유 종목 수", f"{len(aggregated)}개")
                         with col2:
-                            avg_profit = sum(p['profit_rate'] for p in positions) / len(positions) if positions else 0
+                            avg_profit = sum(agg['profit_rate'] for agg in aggregated) / len(aggregated) if aggregated else 0
                             st.metric("평균 수익률", f"{avg_profit:+.2f}%")
                         with col3:
-                            profitable = sum(1 for p in positions if p['profit_rate'] > 0)
+                            profitable = sum(1 for agg in aggregated if agg['profit_rate'] > 0)
                             st.metric("수익 종목", f"{profitable}개")
                         with col4:
-                            losing = sum(1 for p in positions if p['profit_rate'] < 0)
+                            losing = sum(1 for agg in aggregated if agg['profit_rate'] < 0)
                             st.metric("손실 종목", f"{losing}개")
 
                         st.markdown("---")
 
-                        # 보유 종목 목록 표시
-                        for idx, pos in enumerate(positions, 1):
-                            profit_rate = pos['profit_rate']
+                        # 데이터프레임 표시 (종목별 합산) - 요약 테이블을 먼저 표시
+                        st.markdown("### 📋 요약 테이블")
+                        df_data = []
+                        for agg in aggregated:
+                            total_value = agg['current_price'] * agg['total_quantity']
+                            net_profit = total_value - agg['total_cost']
+
+                            df_data.append({
+                                '종목명': agg['company_name'],
+                                '종목코드': agg['ticker'],
+                                '평균 매수가': f"{agg['avg_buy_price']:,.0f}원",
+                                '현재가': f"{agg['current_price']:,.0f}원",
+                                '총 수량': f"{agg['total_quantity']}주",
+                                '매수 횟수': f"{agg['buy_count']}회",
+                                '수익률': f"{agg['profit_rate']:+.2f}%",
+                                '순수익': f"{net_profit:+,.0f}원"
+                            })
+
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+
+                        st.markdown("---")
+                        st.markdown("### 📊 종목별 상세 정보")
+
+                        # 보유 종목 목록 표시 (종목별 합산)
+                        for idx, agg in enumerate(aggregated, 1):
+                            profit_rate = agg['profit_rate']
                             if profit_rate > 0:
                                 color = "green"
                                 emoji = "🔺"
@@ -1214,44 +1501,89 @@ asyncio.run(run())
                                 color = "gray"
                                 emoji = "➖"
 
-                            with st.expander(f"{emoji} {pos['company_name']} ({pos['ticker']}) - 수익률: {profit_rate:+.2f}%", expanded=(idx <= 3)):
-                                col1, col2 = st.columns(2)
+                            ticker = agg['ticker']
+                            company_name = agg['company_name']
+                            buy_count = agg['buy_count']
+
+                            # 종목별 합산 정보
+                            with st.expander(
+                                f"{emoji} {company_name} ({ticker}) - 총 {agg['total_quantity']}주 ({buy_count}회 매수) - 수익률: {profit_rate:+.2f}%",
+                                expanded=(idx <= 3)
+                            ):
+                                # 합산 정보
+                                st.markdown("#### 📊 종목 합산 정보")
+                                col1, col2, col3 = st.columns(3)
 
                                 with col1:
-                                    st.markdown(f"**매수가:** {pos['buy_price']:,.0f}원")
-                                    st.markdown(f"**현재가:** {pos['current_price']:,.0f}원")
-                                    st.markdown(f"**목표가:** {pos.get('target_price', 0):,.0f}원")
+                                    st.markdown(f"**평균 매수가:** {agg['avg_buy_price']:,.0f}원")
+                                    st.markdown(f"**현재가:** {agg['current_price']:,.0f}원")
+                                    st.markdown(f"**총 보유 수량:** {agg['total_quantity']}주")
 
                                 with col2:
-                                    st.markdown(f"**손절가:** {pos.get('stop_loss', 0):,.0f}원")
-                                    st.markdown(f"**매수일:** {pos['buy_date']}")
+                                    st.markdown(f"**총 투자금액:** {agg['total_cost']:,.0f}원")
+                                    total_value = agg['current_price'] * agg['total_quantity']
+                                    st.markdown(f"**총 평가금액:** {total_value:,.0f}원")
+                                    profit_loss = total_value - agg['total_cost']
+                                    st.markdown(f"**평가손익:** :{color}[{profit_loss:+,.0f}원]")
+
+                                with col3:
                                     st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                                    st.markdown(f"**매수 횟수:** {buy_count}회")
 
-                                # 시나리오 정보
-                                if pos.get('scenario'):
-                                    try:
-                                        scenario = json.loads(pos['scenario']) if isinstance(pos['scenario'], str) else pos['scenario']
-                                        if scenario.get('rationale') != "미입력":
-                                            st.markdown("**투자 근거:**")
-                                            st.markdown(f"- {scenario.get('rationale', '정보 없음')}")
-                                    except:
-                                        pass
+                                st.markdown("---")
 
-                        # 데이터프레임 표시
-                        st.markdown("### 📋 요약 테이블")
-                        df_data = []
-                        for pos in positions:
-                            df_data.append({
-                                '종목명': pos['company_name'],
-                                '종목코드': pos['ticker'],
-                                '매수가': f"{pos['buy_price']:,.0f}원",
-                                '현재가': f"{pos['current_price']:,.0f}원",
-                                '수익률': f"{pos['profit_rate']:+.2f}%",
-                                '매수일': pos['buy_date'].split()[0]
-                            })
+                                # 개별 매수 내역
+                                st.markdown("#### 📝 개별 매수 내역")
+                                details = db.get_position_details_by_ticker(ticker)
 
-                        df = pd.DataFrame(df_data)
-                        st.dataframe(df, use_container_width=True, hide_index=True)
+                                for detail_idx, detail in enumerate(details, 1):
+                                    # 개별 수익률 계산
+                                    detail_profit_rate = ((detail['current_price'] - detail['buy_price']) / detail['buy_price'] * 100)
+                                    detail_profit_loss = (detail['current_price'] - detail['buy_price']) * detail['quantity']
+
+                                    if detail_profit_rate > 0:
+                                        detail_color = "green"
+                                    elif detail_profit_rate < 0:
+                                        detail_color = "red"
+                                    else:
+                                        detail_color = "gray"
+
+                                    with st.container():
+                                        st.markdown(f"**매수 #{detail_idx} - {detail['buy_date']}**")
+
+                                        dcol1, dcol2, dcol3 = st.columns(3)
+
+                                        with dcol1:
+                                            st.markdown(f"• 매수가: {detail['buy_price']:,.0f}원")
+                                            st.markdown(f"• 수량: {detail['quantity']}주")
+                                            st.markdown(f"• 투자금액: {detail['buy_price'] * detail['quantity']:,.0f}원")
+
+                                        with dcol2:
+                                            st.markdown(f"• 현재가: {detail['current_price']:,.0f}원")
+                                            st.markdown(f"• 평가금액: {detail['current_price'] * detail['quantity']:,.0f}원")
+                                            st.markdown(f"• 손익: :{detail_color}[{detail_profit_loss:+,.0f}원]")
+
+                                        with dcol3:
+                                            st.markdown(f"• 수익률: :{detail_color}[{detail_profit_rate:+.2f}%]")
+                                            st.markdown(f"• RSI: {detail.get('rsi', 0):.2f}" if detail.get('rsi') else "• RSI: N/A")
+                                            st.markdown(f"• MACD: {detail.get('macd', 0):.2f}" if detail.get('macd') else "• MACD: N/A")
+
+                                        # 기술적 지표 추가 정보
+                                        st.markdown(f"📈 **당시 시장 지표** - 종목 ADR: {detail.get('adr', 0):.2f}, "
+                                                   f"코스피 ADR: {detail.get('market_kospi_adr', 0):.2f}, "
+                                                   f"코스닥 ADR: {detail.get('market_kosdaq_adr', 0):.2f}")
+
+                                        # 투자 근거
+                                        if detail.get('scenario'):
+                                            try:
+                                                scenario = json.loads(detail['scenario']) if isinstance(detail['scenario'], str) else detail['scenario']
+                                                if scenario.get('rationale') and scenario.get('rationale') != "미입력":
+                                                    st.markdown(f"💡 **투자 근거:** {scenario.get('rationale')}")
+                                            except:
+                                                pass
+
+                                        if detail_idx < len(details):
+                                            st.markdown("---")
 
             except Exception as e:
                 st.error(f"보유 종목 조회 중 오류가 발생했습니다: {str(e)}")
@@ -1259,100 +1591,507 @@ asyncio.run(run())
                 st.code(traceback.format_exc())
 
     def render_sell_records(self):
-        """매도 기록 화면"""
+        """매도 기록 화면 (분할 뷰: 보유종목 목록 + 매도 폼)"""
         self.add_app_header()
 
         st.markdown("## 📉 매도 기록")
-        st.markdown("과거 매도한 종목의 거래 내역을 확인할 수 있습니다.")
+        st.markdown("보유 중인 종목을 선택하여 매도를 기록할 수 있습니다.")
 
         if TradingJournalDB is None:
-            st.error("TradingJournalDB 모듈을 불러올 수 없습니다. trading_journal_db.py 파일이 존재하는지 확인해주세요.")
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다.")
+            return
+
+        if stock is None:
+            st.warning("pykrx 라이브러리가 설치되지 않았습니다. `pip install pykrx`를 실행해주세요.")
+
+        try:
+            # 데이터베이스 경로를 project_root로 명시
+            db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+            # 화면 분할: 왼쪽(보유종목), 오른쪽(매도 폼)
+            col_left, col_right = st.columns([1, 1])
+
+            # 왼쪽: 보유 종목 목록
+            with col_left:
+                st.markdown("### 💼 보유 종목 목록")
+
+                with TradingJournalDB(db_path) as db:
+                    positions = db.get_open_positions()
+
+                    if not positions:
+                        st.info("📭 현재 보유 중인 종목이 없습니다.")
+                    else:
+                        st.markdown(f"**총 {len(positions)}건의 보유 내역**")
+
+                        # 선택 가능한 포지션 목록
+                        position_options = {}
+                        for pos in positions:
+                            profit_rate = pos['profit_rate']
+                            label = f"{pos['company_name']} ({pos['ticker']}) | {pos['quantity']}주 | 매수가: {pos['buy_price']:,.0f}원 | 수익률: {profit_rate:+.2f}%"
+                            position_options[label] = pos
+
+                        # 선택된 포지션 저장 (radio button)
+                        selected_label = st.radio(
+                            "매도할 종목을 선택하세요",
+                            list(position_options.keys()),
+                            key="selected_position_radio"
+                        )
+
+                        if selected_label:
+                            selected_position = position_options[selected_label]
+
+                            # 선택된 포지션 상세 정보 표시
+                            with st.expander("📊 선택된 종목 상세 정보", expanded=True):
+                                st.markdown(f"**종목명:** {selected_position['company_name']}")
+                                st.markdown(f"**종목코드:** {selected_position['ticker']}")
+                                st.markdown(f"**매수가:** {selected_position['buy_price']:,.0f}원")
+                                st.markdown(f"**현재가:** {selected_position['current_price']:,.0f}원")
+                                st.markdown(f"**보유 수량:** {selected_position['quantity']}주")
+                                st.markdown(f"**매수일:** {selected_position['buy_date']}")
+                                st.markdown(f"**수익률:** {selected_position['profit_rate']:+.2f}%")
+
+                                if selected_position.get('rsi'):
+                                    st.markdown(f"**RSI (매수 당시):** {selected_position['rsi']:.2f}")
+                                if selected_position.get('macd'):
+                                    st.markdown(f"**MACD (매수 당시):** {selected_position['macd']:.2f}")
+
+            # 오른쪽: 매도 폼
+            with col_right:
+                st.markdown("### 📝 매도 기록 입력")
+
+                if not positions:
+                    st.info("매도할 보유 종목이 없습니다.")
+                elif selected_label:
+                    selected_position = position_options[selected_label]
+
+                    # 현재가 조회 (최신 가격)
+                    with st.spinner("현재가를 조회하고 있습니다..."):
+                        if stock is not None:
+                            try:
+                                end_date = datetime.now().strftime("%Y%m%d")
+                                start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+                                df = stock.get_market_ohlcv_by_date(start_date, end_date, selected_position['ticker'])
+                                if not df.empty:
+                                    latest_price = df['종가'].iloc[-1]
+                                    st.info(f"💹 최신 현재가: {latest_price:,.0f}원")
+                                else:
+                                    latest_price = selected_position['current_price']
+                            except:
+                                latest_price = selected_position['current_price']
+                        else:
+                            latest_price = selected_position['current_price']
+
+                    # 매도 폼
+                    with st.form("sell_record_form"):
+                        st.markdown("#### 💰 매도 정보")
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            sell_price = st.number_input(
+                                "💵 매도가 (원) *",
+                                min_value=1,
+                                value=int(latest_price),
+                                step=100,
+                                help="실제 매도한 가격을 입력해주세요"
+                            )
+                        with col2:
+                            sell_quantity = st.number_input(
+                                "📦 매도 수량 *",
+                                min_value=1,
+                                max_value=selected_position['quantity'],
+                                value=selected_position['quantity'],
+                                step=1,
+                                help=f"최대 {selected_position['quantity']}주까지 매도 가능"
+                            )
+
+                        sell_date = st.date_input(
+                            "📅 매도일",
+                            value=datetime.now(),
+                            max_value=datetime.now(),
+                            help="매도한 날짜를 선택하세요"
+                        )
+
+                        # 매도 사유
+                        sell_reason = st.text_area(
+                            "매도 사유 (선택사항)",
+                            placeholder="매도 이유를 간단히 작성해주세요...",
+                            height=100
+                        )
+
+                        # 예상 수익 계산
+                        buy_price = selected_position['buy_price']
+                        profit_per_share = sell_price - buy_price
+                        total_profit = profit_per_share * sell_quantity
+                        profit_rate = (profit_per_share / buy_price) * 100
+
+                        st.markdown("---")
+                        st.markdown("#### 📊 예상 수익 분석")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("주당 손익", f"{profit_per_share:+,.0f}원")
+                        with col2:
+                            st.metric("총 손익", f"{total_profit:+,.0f}원")
+                        with col3:
+                            st.metric("수익률", f"{profit_rate:+.2f}%")
+
+                        st.markdown("---")
+
+                        # 제출 버튼
+                        col1, col2, col3 = st.columns([1, 1, 1])
+                        with col2:
+                            submitted = st.form_submit_button("💾 매도 기록 저장", use_container_width=True, type="primary")
+
+                        if submitted:
+                            if sell_price <= 0:
+                                st.error("❌ 매도가를 입력해주세요.")
+                            elif sell_quantity <= 0:
+                                st.error("❌ 매도 수량을 입력해주세요.")
+                            elif sell_quantity > selected_position['quantity']:
+                                st.error(f"❌ 매도 수량은 최대 {selected_position['quantity']}주까지 가능합니다.")
+                            else:
+                                # 매도 처리
+                                sell_date_str = sell_date.strftime("%Y-%m-%d")
+
+                                with TradingJournalDB(db_path) as db:
+                                    success = db.sell_position(
+                                        position_id=selected_position['id'],
+                                        sell_quantity=sell_quantity,
+                                        sell_price=sell_price,
+                                        sell_date=sell_date_str
+                                    )
+
+                                    if success:
+                                        if sell_quantity == selected_position['quantity']:
+                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 전체 매도가 완료되었습니다!")
+                                        else:
+                                            remaining = selected_position['quantity'] - sell_quantity
+                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 부분 매도가 완료되었습니다! (잔여: {remaining}주)")
+
+                                        st.info(f"💰 실현 손익: {total_profit:+,.0f}원 ({profit_rate:+.2f}%)")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ 매도 처리 중 오류가 발생했습니다.")
+
+                else:
+                    st.info("왼쪽에서 매도할 종목을 선택해주세요.")
+
+            # 구분선
+            st.markdown("---")
+            st.markdown("## 📜 과거 매도 내역")
+
+            # 과거 매도 기록 조회 (stock_holdings에서 is_sold=1인 것들)
+            with TradingJournalDB(db_path) as db:
+                # is_sold=1인 레코드 조회
+                db.cursor.execute("""
+                    SELECT
+                        id, ticker, company_name, buy_price, buy_date, quantity,
+                        sell_price, sell_date, rsi, macd, adr,
+                        market_kospi_adr, market_kosdaq_adr, scenario
+                    FROM stock_holdings
+                    WHERE is_sold = 1
+                    ORDER BY sell_date DESC
+                """)
+
+                sold_records = db.cursor.fetchall()
+
+                if not sold_records:
+                    st.info("📭 매도 기록이 없습니다.")
+                else:
+                    # 통계 정보
+                    total_trades = len(sold_records)
+                    profitable = sum(1 for r in sold_records if r['sell_price'] > r['buy_price'])
+                    losing = total_trades - profitable
+                    win_rate = (profitable / total_trades * 100) if total_trades > 0 else 0
+                    avg_profit_rate = sum(((r['sell_price'] - r['buy_price']) / r['buy_price'] * 100) for r in sold_records) / total_trades if total_trades > 0 else 0
+
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("총 거래", f"{total_trades}건")
+                    with col2:
+                        st.metric("수익 거래", f"{profitable}건", delta=f"{win_rate:.1f}% 승률")
+                    with col3:
+                        st.metric("손실 거래", f"{losing}건")
+                    with col4:
+                        st.metric("평균 수익률", f"{avg_profit_rate:+.2f}%")
+
+                    st.markdown("---")
+
+                    # 정렬 옵션
+                    st.markdown("### 💰 매도 내역")
+                    col1, col2 = st.columns([3, 1])
+                    with col2:
+                        sort_option = st.selectbox(
+                            "정렬 기준",
+                            ["매도일 (최신순)", "매도일 (오래된순)", "수익률 (높은순)", "수익률 (낮은순)"],
+                            index=0
+                        )
+
+                    # 정렬 적용
+                    sold_list = [dict(r) for r in sold_records]
+                    if sort_option == "매도일 (최신순)":
+                        sold_list.sort(key=lambda x: x['sell_date'], reverse=True)
+                    elif sort_option == "매도일 (오래된순)":
+                        sold_list.sort(key=lambda x: x['sell_date'])
+                    elif sort_option == "수익률 (높은순)":
+                        sold_list.sort(key=lambda x: ((x['sell_price'] - x['buy_price']) / x['buy_price'] * 100), reverse=True)
+                    elif sort_option == "수익률 (낮은순)":
+                        sold_list.sort(key=lambda x: ((x['sell_price'] - x['buy_price']) / x['buy_price'] * 100))
+
+                    st.markdown(f"**총 {len(sold_list)}건의 거래 내역**")
+
+                    for idx, trade in enumerate(sold_list, 1):
+                        profit_rate = ((trade['sell_price'] - trade['buy_price']) / trade['buy_price'] * 100)
+                        net_profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
+
+                        if profit_rate > 0:
+                            color = "green"
+                            emoji = "✅"
+                            result = "수익"
+                        else:
+                            color = "red"
+                            emoji = "❌"
+                            result = "손실"
+
+                        with st.expander(
+                            f"{emoji} {trade['company_name']} ({trade['ticker']}) - {result}: {profit_rate:+.2f}% | 순수익: {net_profit:+,.0f}원",
+                            expanded=(idx <= 5)
+                        ):
+                            col1, col2, col3 = st.columns(3)
+
+                            with col1:
+                                st.markdown("#### 💰 거래 정보")
+                                st.markdown(f"**매수가:** {trade['buy_price']:,.0f}원")
+                                st.markdown(f"**매도가:** {trade['sell_price']:,.0f}원")
+                                st.markdown(f"**수량:** {trade['quantity']}주")
+                                st.markdown(f"**투자금액:** {trade['buy_price'] * trade['quantity']:,.0f}원")
+
+                            with col2:
+                                st.markdown("#### 📊 수익 분석")
+                                st.markdown(f"**매수일:** {trade['buy_date']}")
+                                st.markdown(f"**매도일:** {trade['sell_date']}")
+                                st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                                st.markdown(f"**순수익:** :{color}[{net_profit:+,.0f}원]")
+
+                            with col3:
+                                st.markdown("#### 📈 매수 당시 지표")
+                                st.markdown(f"**RSI:** {trade.get('rsi', 0):.2f}" if trade.get('rsi') else "**RSI:** N/A")
+                                st.markdown(f"**MACD:** {trade.get('macd', 0):.2f}" if trade.get('macd') else "**MACD:** N/A")
+                                st.markdown(f"**종목 ADR:** {trade.get('adr', 0):.2f}" if trade.get('adr') else "**종목 ADR:** N/A")
+
+                            # 투자 근거
+                            if trade.get('scenario'):
+                                try:
+                                    scenario = json.loads(trade['scenario']) if isinstance(trade['scenario'], str) else trade['scenario']
+                                    if scenario.get('rationale') and scenario.get('rationale') != "미입력":
+                                        st.markdown("---")
+                                        st.markdown(f"💡 **투자 근거:** {scenario.get('rationale')}")
+                                except:
+                                    pass
+
+                    # 데이터프레임으로도 표시
+                    st.markdown("### 📋 거래 내역 테이블")
+                    df_data = []
+                    for trade in sold_list:
+                        profit_rate = ((trade['sell_price'] - trade['buy_price']) / trade['buy_price'] * 100)
+                        net_profit = (trade['sell_price'] - trade['buy_price']) * trade['quantity']
+
+                        df_data.append({
+                            '종목명': trade['company_name'],
+                            '종목코드': trade['ticker'],
+                            '매수가': f"{trade['buy_price']:,.0f}원",
+                            '매도가': f"{trade['sell_price']:,.0f}원",
+                            '수량': f"{trade['quantity']}주",
+                            '수익률': f"{profit_rate:+.2f}%",
+                            '순수익': f"{net_profit:+,.0f}원",
+                            '매수일': trade['buy_date'].split()[0] if ' ' in trade['buy_date'] else trade['buy_date'],
+                            '매도일': trade['sell_date'].split()[0] if ' ' in trade['sell_date'] else trade['sell_date']
+                        })
+
+                    df = pd.DataFrame(df_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            st.error(f"매도 기록 조회 중 오류가 발생했습니다: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+
+    def render_transaction_history(self):
+        """전체 거래 히스토리 화면 (보유 + 매도)"""
+        self.add_app_header()
+
+        st.markdown("## 📜 전체 거래 히스토리")
+        st.markdown("모든 매수 기록을 시간순으로 확인할 수 있습니다. (보유 중인 종목 + 매도 완료 종목)")
+
+        if TradingJournalDB is None:
+            st.error("TradingJournalDB 모듈을 불러올 수 없습니다.")
             return
 
         try:
-            with TradingJournalDB() as db:
-                # 조회 건수 선택
-                limit_options = [10, 20, 50, 100]
-                limit = st.selectbox("조회 건수", limit_options, index=0)
+            # 데이터베이스 경로를 project_root로 명시
+            db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+            with TradingJournalDB(db_path) as db:
+                transactions = db.get_all_transactions()
 
-                history = db.get_trading_history(limit=limit)
-
-                if not history:
-                    st.info("📭 매도 기록이 없습니다.")
+                if not transactions:
+                    st.info("📭 거래 내역이 없습니다.")
                     return
 
-                # 통계 정보
-                stats = db.get_statistics()
-                col1, col2, col3, col4 = st.columns(4)
+                # 전체 통계
+                holding_count = sum(1 for t in transactions if t['status'] == 'HOLDING')
+                sold_count = sum(1 for t in transactions if t['status'] == 'SOLD')
 
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("총 거래", f"{stats.get('total_trades', 0)}건")
+                    st.metric("전체 거래", f"{len(transactions)}건")
                 with col2:
-                    st.metric("수익 거래", f"{stats.get('profitable_trades', 0)}건",
-                             delta=f"{stats.get('win_rate', 0):.1f}% 승률")
+                    st.metric("보유 중", f"{holding_count}건", delta="HOLDING")
                 with col3:
-                    st.metric("손실 거래", f"{stats.get('losing_trades', 0)}건")
+                    st.metric("매도 완료", f"{sold_count}건", delta="SOLD")
                 with col4:
-                    st.metric("평균 수익률", f"{stats.get('avg_profit_rate', 0):+.2f}%")
+                    st.metric("고유 종목 수", f"{len(set(t['ticker'] for t in transactions))}개")
 
                 st.markdown("---")
 
-                # 매도 내역 목록
-                st.markdown("### 💰 매도 내역")
+                # 필터 및 정렬 옵션
+                col1, col2, col3 = st.columns([2, 2, 2])
+                with col1:
+                    status_filter = st.selectbox(
+                        "상태 필터",
+                        ["전체", "보유 중", "매도 완료"]
+                    )
+                with col2:
+                    sort_option = st.selectbox(
+                        "정렬 기준",
+                        ["매수일 (최신순)", "매수일 (오래된순)", "종목명 (가나다순)", "종목명 (역순)"]
+                    )
+                with col3:
+                    st.markdown("")  # 간격
 
-                for idx, trade in enumerate(history, 1):
-                    profit_rate = trade['profit_rate']
-                    if profit_rate > 0:
-                        color = "green"
-                        emoji = "✅"
-                        result = "수익"
+                # 필터 적용
+                filtered_transactions = transactions
+                if status_filter == "보유 중":
+                    filtered_transactions = [t for t in transactions if t['status'] == 'HOLDING']
+                elif status_filter == "매도 완료":
+                    filtered_transactions = [t for t in transactions if t['status'] == 'SOLD']
+
+                # 정렬 적용
+                if sort_option == "매수일 (최신순)":
+                    filtered_transactions.sort(key=lambda x: x['buy_date'], reverse=True)
+                elif sort_option == "매수일 (오래된순)":
+                    filtered_transactions.sort(key=lambda x: x['buy_date'])
+                elif sort_option == "종목명 (가나다순)":
+                    filtered_transactions.sort(key=lambda x: x['company_name'])
+                elif sort_option == "종목명 (역순)":
+                    filtered_transactions.sort(key=lambda x: x['company_name'], reverse=True)
+
+                st.markdown(f"**총 {len(filtered_transactions)}건의 거래 내역**")
+                st.markdown("---")
+
+                # 거래 내역 표시
+                for idx, trans in enumerate(filtered_transactions, 1):
+                    status = trans['status']
+                    current_price = trans['current_price']
+
+                    if status == 'HOLDING':
+                        # 보유 중인 종목
+                        profit_rate = ((current_price - trans['buy_price']) / trans['buy_price'] * 100)
+                        profit_loss = (current_price - trans['buy_price']) * trans['quantity']
+
+                        if profit_rate > 0:
+                            color = "green"
+                            emoji = "🟢"
+                        elif profit_rate < 0:
+                            color = "red"
+                            emoji = "🔴"
+                        else:
+                            color = "gray"
+                            emoji = "⚪"
+
+                        status_badge = "🔵 보유 중"
                     else:
-                        color = "red"
-                        emoji = "❌"
-                        result = "손실"
+                        # 매도 완료 종목
+                        profit_rate = ((current_price - trans['buy_price']) / trans['buy_price'] * 100)
+                        profit_loss = (current_price - trans['buy_price']) * trans['quantity']
 
-                    with st.expander(f"{emoji} {trade['company_name']} ({trade['ticker']}) - {result}: {profit_rate:+.2f}%", expanded=(idx <= 5)):
-                        col1, col2 = st.columns(2)
+                        if profit_rate > 0:
+                            color = "green"
+                            emoji = "✅"
+                        else:
+                            color = "red"
+                            emoji = "❌"
+
+                        status_badge = "⚫ 매도 완료"
+
+                    with st.expander(
+                        f"{emoji} {trans['company_name']} ({trans['ticker']}) | {status_badge} | 수익률: {profit_rate:+.2f}% | 순수익: {profit_loss:+,.0f}원",
+                        expanded=(idx <= 5)
+                    ):
+                        col1, col2, col3 = st.columns(3)
 
                         with col1:
-                            st.markdown(f"**매수가:** {trade['buy_price']:,.0f}원")
-                            st.markdown(f"**매도가:** {trade['sell_price']:,.0f}원")
-                            st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                            st.markdown("#### 💰 거래 정보")
+                            st.markdown(f"**매수가:** {trans['buy_price']:,.0f}원")
+                            st.markdown(f"**매수 수량:** {trans['quantity']}주")
+                            st.markdown(f"**투자금액:** {trans['buy_price'] * trans['quantity']:,.0f}원")
+                            st.markdown(f"**매수일:** {trans['buy_date']}")
+
+                            if status == 'HOLDING':
+                                st.markdown(f"**현재가:** {current_price:,.0f}원")
+                            else:
+                                st.markdown(f"**매도가:** {current_price:,.0f}원")
 
                         with col2:
-                            st.markdown(f"**매수일:** {trade['buy_date']}")
-                            st.markdown(f"**매도일:** {trade['sell_date']}")
-                            st.markdown(f"**보유기간:** {trade['holding_days']}일")
+                            st.markdown("#### 📊 수익 분석")
+                            st.markdown(f"**평가/매도 금액:** {current_price * trans['quantity']:,.0f}원")
+                            st.markdown(f"**평가손익:** :{color}[{profit_loss:+,.0f}원]")
+                            st.markdown(f"**수익률:** :{color}[{profit_rate:+.2f}%]")
+                            st.markdown(f"**상태:** {status_badge}")
 
-                        # 시나리오 정보
-                        if trade.get('scenario'):
+                        with col3:
+                            st.markdown("#### 📈 기술적 지표 (매수 당시)")
+                            st.markdown(f"**RSI:** {trans.get('rsi', 0):.2f}" if trans.get('rsi') else "**RSI:** N/A")
+                            st.markdown(f"**MACD:** {trans.get('macd', 0):.2f}" if trans.get('macd') else "**MACD:** N/A")
+                            st.markdown(f"**종목 ADR:** {trans.get('adr', 0):.2f}" if trans.get('adr') else "**종목 ADR:** N/A")
+                            st.markdown(f"**코스피 ADR:** {trans.get('market_kospi_adr', 0):.2f}" if trans.get('market_kospi_adr') else "**코스피 ADR:** N/A")
+                            st.markdown(f"**코스닥 ADR:** {trans.get('market_kosdaq_adr', 0):.2f}" if trans.get('market_kosdaq_adr') else "**코스닥 ADR:** N/A")
+
+                        # 투자 근거
+                        if trans.get('scenario'):
                             try:
-                                scenario = json.loads(trade['scenario']) if isinstance(trade['scenario'], str) else trade['scenario']
-                                st.markdown("**투자 정보:**")
-                                st.markdown(f"- 투자 기간: {scenario.get('investment_period', '중기')}")
-                                st.markdown(f"- 산업군: {scenario.get('sector', '알 수 없음')}")
+                                scenario = json.loads(trans['scenario']) if isinstance(trans['scenario'], str) else trans['scenario']
+                                if scenario.get('rationale') and scenario.get('rationale') != "미입력":
+                                    st.markdown("---")
+                                    st.markdown(f"💡 **투자 근거:** {scenario.get('rationale')}")
                             except:
                                 pass
 
-                # 데이터프레임으로도 표시
+                # 데이터프레임 표시
                 st.markdown("### 📋 거래 내역 테이블")
                 df_data = []
-                for trade in history:
+                for trans in filtered_transactions:
+                    status = trans['status']
+                    current_price = trans['current_price']
+                    profit_rate = ((current_price - trans['buy_price']) / trans['buy_price'] * 100)
+                    net_profit = (current_price - trans['buy_price']) * trans['quantity']
+
                     df_data.append({
-                        '종목명': trade['company_name'],
-                        '종목코드': trade['ticker'],
-                        '매수가': f"{trade['buy_price']:,.0f}원",
-                        '매도가': f"{trade['sell_price']:,.0f}원",
-                        '수익률': f"{trade['profit_rate']:+.2f}%",
-                        '보유기간': f"{trade['holding_days']}일",
-                        '매도일': trade['sell_date'].split()[0]
+                        '상태': '🔵 보유' if status == 'HOLDING' else '⚫ 매도',
+                        '종목명': trans['company_name'],
+                        '종목코드': trans['ticker'],
+                        '매수가': f"{trans['buy_price']:,.0f}원",
+                        '현재/매도가': f"{current_price:,.0f}원",
+                        '수량': f"{trans['quantity']}주",
+                        '수익률': f"{profit_rate:+.2f}%",
+                        '순수익': f"{net_profit:+,.0f}원",
+                        '매수일': trans['buy_date'].split()[0] if ' ' in trans['buy_date'] else trans['buy_date']
                     })
 
                 df = pd.DataFrame(df_data)
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
         except Exception as e:
-            st.error(f"매도 기록 조회 중 오류가 발생했습니다: {str(e)}")
+            st.error(f"거래 히스토리 조회 중 오류가 발생했습니다: {str(e)}")
             import traceback
             st.code(traceback.format_exc())
 
@@ -1373,7 +2112,8 @@ asyncio.run(run())
             "분석 요청": "📝",
             "보고서 보기": "📚",
             "매수 기록": "💰",
-            "매도 기록": "📉"
+            "매도 기록": "📉",
+            "거래 히스토리": "📜"
         }
 
         menu = st.sidebar.radio(
@@ -1397,6 +2137,8 @@ asyncio.run(run())
             self.render_buy_records()
         elif menu == "매도 기록":
             self.render_sell_records()
+        elif menu == "거래 히스토리":
+            self.render_transaction_history()
 
 if __name__ == "__main__":
     app = ModernStockAnalysisApp()
