@@ -1791,39 +1791,62 @@ asyncio.run(run())
                     if not positions:
                         st.info("📭 현재 보유 중인 종목이 없습니다.")
                     else:
-                        st.markdown(f"**총 {len(positions)}건의 보유 내역**")
+                        st.markdown(f"### 💼 보유 종목 ({len(positions)}건)")
+                        st.markdown("매도할 종목을 선택하세요")
 
-                        # 선택 가능한 포지션 목록
-                        position_options = {}
-                        for pos in positions:
+                        # session_state에 선택된 포지션 저장
+                        if 'selected_position_id' not in st.session_state:
+                            st.session_state.selected_position_id = None
+
+                        # 각 포지션을 카드 형식의 버튼으로 표시
+                        for idx, pos in enumerate(positions):
                             profit_rate = pos['profit_rate']
-                            label = f"{pos['company_name']} ({pos['ticker']}) | {pos['quantity']}주 | 매수가: {pos['buy_price']:,.0f}원 | 수익률: {profit_rate:+.2f}%"
-                            position_options[label] = pos
+                            is_selected = st.session_state.selected_position_id == pos.get('id')
 
-                        # 선택된 포지션 저장 (radio button)
-                        selected_label = st.radio(
-                            "매도할 종목을 선택하세요",
-                            list(position_options.keys()),
-                            key="selected_position_radio"
-                        )
+                            # 수익률에 따른 색상 결정
+                            if profit_rate > 0:
+                                profit_color = "🟢"
+                                profit_emoji = "📈"
+                            elif profit_rate < 0:
+                                profit_color = "🔴"
+                                profit_emoji = "📉"
+                            else:
+                                profit_color = "⚪"
+                                profit_emoji = "➖"
 
-                        if selected_label:
-                            selected_position = position_options[selected_label]
+                            # 선택된 포지션은 primary 버튼으로 표시
+                            button_type = "primary" if is_selected else "secondary"
 
-                            # 선택된 포지션 상세 정보 표시
-                            with st.expander("📊 선택된 종목 상세 정보", expanded=True):
-                                st.markdown(f"**종목명:** {selected_position['company_name']}")
-                                st.markdown(f"**종목코드:** {selected_position['ticker']}")
-                                st.markdown(f"**매수가:** {selected_position['buy_price']:,.0f}원")
-                                st.markdown(f"**현재가:** {selected_position['current_price']:,.0f}원")
-                                st.markdown(f"**보유 수량:** {selected_position['quantity']}주")
-                                st.markdown(f"**매수일:** {selected_position['buy_date']}")
-                                st.markdown(f"**수익률:** {selected_position['profit_rate']:+.2f}%")
+                            # 버튼 라벨 구성 (더 큰 폰트와 명확한 정보)
+                            button_label = f"{profit_emoji} **{pos['company_name']}** ({pos['ticker']})"
 
-                                if selected_position.get('rsi'):
-                                    st.markdown(f"**RSI (매수 당시):** {selected_position['rsi']:.2f}")
-                                if selected_position.get('macd'):
-                                    st.markdown(f"**MACD (매수 당시):** {selected_position['macd']:.2f}")
+                            if st.button(
+                                button_label,
+                                key=f"position_btn_{idx}_{pos.get('id')}",
+                                type=button_type,
+                                use_container_width=True
+                            ):
+                                st.session_state.selected_position_id = pos.get('id')
+                                st.rerun()
+
+                            # 선택된 포지션의 경우 상세 정보 표시
+                            if is_selected:
+                                with st.container():
+                                    st.markdown(f"""
+                                    <div style='padding: 10px; background-color: rgba(128, 128, 128, 0.1); border-radius: 5px; margin-bottom: 10px;'>
+                                        <p style='font-size: 14px; margin: 5px 0;'>💰 <strong>매수가:</strong> {pos['buy_price']:,.0f}원 | <strong>현재가:</strong> {pos['current_price']:,.0f}원</p>
+                                        <p style='font-size: 14px; margin: 5px 0;'>📊 <strong>보유 수량:</strong> {pos['quantity']}주 | <strong>매수일:</strong> {pos['buy_date']}</p>
+                                        <p style='font-size: 16px; margin: 5px 0;'>{profit_color} <strong>수익률:</strong> {profit_rate:+.2f}%</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                        # 선택된 포지션 정보를 변수로 저장
+                        selected_position = None
+                        if st.session_state.selected_position_id is not None:
+                            for pos in positions:
+                                if pos.get('id') == st.session_state.selected_position_id:
+                                    selected_position = pos
+                                    break
 
             # 오른쪽: 매도 폼
             with col_right:
@@ -1831,9 +1854,7 @@ asyncio.run(run())
 
                 if not positions:
                     st.info("매도할 보유 종목이 없습니다.")
-                elif selected_label:
-                    selected_position = position_options[selected_label]
-
+                elif selected_position:
                     # 현재가 조회 (최신 가격)
                     with st.spinner("현재가를 조회하고 있습니다..."):
                         if stock is not None:
@@ -2292,7 +2313,7 @@ streamlit run examples/streamlit/app_modern.py
 
         st.sidebar.title("메뉴")
 
-        # 모던한 사이드바 메뉴
+        # 모던한 사이드바 메뉴 (버튼 스타일)
         menu_options = {
             "분석 요청": "📝",
             "보고서 보기": "📚",
@@ -2301,11 +2322,26 @@ streamlit run examples/streamlit/app_modern.py
             "거래 히스토리": "📜"
         }
 
-        menu = st.sidebar.radio(
-            "선택",
-            list(menu_options.keys()),
-            format_func=lambda x: f"{menu_options[x]} {x}"
-        )
+        # session_state에 선택된 메뉴 저장 (초기값)
+        if 'selected_menu' not in st.session_state:
+            st.session_state.selected_menu = "분석 요청"
+
+        # 각 메뉴를 버튼으로 표시
+        for menu_name, icon in menu_options.items():
+            is_selected = st.session_state.selected_menu == menu_name
+            button_type = "primary" if is_selected else "secondary"
+
+            # 버튼 클릭 시 메뉴 변경
+            if st.sidebar.button(
+                f"{icon} {menu_name}",
+                key=f"menu_btn_{menu_name}",
+                type=button_type,
+                use_container_width=True
+            ):
+                st.session_state.selected_menu = menu_name
+                st.rerun()
+
+        menu = st.session_state.selected_menu
 
         # 앱 버전 및 소셜 링크
         st.sidebar.markdown("---")
