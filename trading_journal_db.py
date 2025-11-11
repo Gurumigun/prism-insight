@@ -581,6 +581,96 @@ class TradingJournalDB:
             logger.error(f"매수 기록 저장 실패: {str(e)}")
             return False
 
+    def update_current_price(self, ticker: str, new_price: float) -> bool:
+        """
+        특정 종목의 현재가를 수동으로 업데이트
+
+        Args:
+            ticker: 종목코드
+            new_price: 새로운 현재가
+
+        Returns:
+            성공 여부
+        """
+        try:
+            # 해당 종목의 모든 미매도 포지션의 current_price 업데이트
+            self.cursor.execute("""
+                UPDATE stock_holdings
+                SET current_price = ?, last_updated = ?
+                WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+            """, (new_price, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ticker))
+
+            updated_count = self.cursor.rowcount
+            self.conn.commit()
+
+            logger.info(f"{ticker} 종목의 현재가 업데이트 완료: {new_price}원 ({updated_count}건)")
+            return True
+
+        except Exception as e:
+            logger.error(f"현재가 업데이트 실패: {str(e)}")
+            return False
+
+    def update_all_current_prices_from_pykrx(self) -> Dict[str, Any]:
+        """
+        모든 보유 종목의 현재가를 pykrx로 한번에 업데이트
+
+        Returns:
+            업데이트 결과 {"success": 성공 개수, "failed": 실패 개수, "details": [...]}
+        """
+        result = {
+            "success": 0,
+            "failed": 0,
+            "details": []
+        }
+
+        try:
+            # 미매도 종목 목록 조회 (중복 제거)
+            self.cursor.execute("""
+                SELECT DISTINCT ticker, company_name
+                FROM stock_holdings
+                WHERE is_sold = 0 OR is_sold IS NULL
+            """)
+
+            tickers = self.cursor.fetchall()
+
+            for row in tickers:
+                ticker = row['ticker']
+                company_name = row['company_name']
+
+                # pykrx로 현재가 조회
+                current_price = self._get_current_price(ticker)
+
+                if current_price is not None:
+                    # 현재가 업데이트
+                    if self.update_current_price(ticker, current_price):
+                        result["success"] += 1
+                        result["details"].append({
+                            "ticker": ticker,
+                            "company_name": company_name,
+                            "price": current_price,
+                            "status": "success"
+                        })
+                    else:
+                        result["failed"] += 1
+                        result["details"].append({
+                            "ticker": ticker,
+                            "company_name": company_name,
+                            "status": "update_failed"
+                        })
+                else:
+                    result["failed"] += 1
+                    result["details"].append({
+                        "ticker": ticker,
+                        "company_name": company_name,
+                        "status": "price_fetch_failed"
+                    })
+
+            return result
+
+        except Exception as e:
+            logger.error(f"일괄 현재가 업데이트 실패: {str(e)}")
+            return result
+
     def sell_position(
         self,
         position_id: int,

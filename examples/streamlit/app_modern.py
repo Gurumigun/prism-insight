@@ -1399,9 +1399,11 @@ asyncio.run(run())
             st.markdown("### 💼 보유 종목 조회")
 
             # 현재가 업데이트 버튼
-            col1, col2 = st.columns([5, 1])
+            col1, col2, col3 = st.columns([4, 1, 1])
             with col2:
-                refresh_button = st.button("🔄 현재가 업데이트", use_container_width=True)
+                refresh_button = st.button("🔄 자동 업데이트", use_container_width=True)
+            with col3:
+                manual_update = st.button("✏️ 수동 입력", use_container_width=True)
 
             try:
                 # 데이터베이스 경로를 project_root로 명시
@@ -1440,6 +1442,77 @@ asyncio.run(run())
 
                             db.conn.commit()
                             st.success(f"✅ {updated_count}개 종목의 현재가가 업데이트되었습니다!")
+
+                # 수동 업데이트 모드
+                if manual_update:
+                    st.session_state.manual_update_mode = True
+
+                # 수동 업데이트 폼 표시
+                if st.session_state.get('manual_update_mode', False):
+                    st.markdown("---")
+                    st.markdown("### ✏️ 수동 현재가 입력")
+                    st.markdown("종목별로 현재가를 직접 입력하세요.")
+
+                    with TradingJournalDB(db_path) as db:
+                        # 중복 제거된 종목 리스트
+                        db.cursor.execute("""
+                            SELECT DISTINCT ticker, company_name,
+                                   MAX(current_price) as current_price
+                            FROM stock_holdings
+                            WHERE is_sold = 0 OR is_sold IS NULL
+                            GROUP BY ticker
+                        """)
+                        unique_stocks = db.cursor.fetchall()
+
+                        if not unique_stocks:
+                            st.info("보유 종목이 없습니다.")
+                        else:
+                            with st.form("manual_price_update_form"):
+                                st.markdown("#### 현재가 입력")
+
+                                price_updates = {}
+                                for stock in unique_stocks:
+                                    ticker = stock['ticker']
+                                    company_name = stock['company_name']
+                                    current_price = stock['current_price']
+
+                                    col1, col2 = st.columns([3, 2])
+                                    with col1:
+                                        st.markdown(f"**{company_name} ({ticker})**")
+                                        st.caption(f"현재 DB 저장값: {current_price:,.0f}원")
+                                    with col2:
+                                        new_price = st.number_input(
+                                            "새 현재가 (원)",
+                                            min_value=0,
+                                            value=int(current_price) if current_price else 0,
+                                            step=100,
+                                            key=f"price_{ticker}",
+                                            label_visibility="collapsed"
+                                        )
+                                        price_updates[ticker] = new_price
+
+                                col1, col2, col3 = st.columns([1, 1, 1])
+                                with col1:
+                                    submit = st.form_submit_button("💾 저장", use_container_width=True)
+                                with col2:
+                                    cancel = st.form_submit_button("❌ 취소", use_container_width=True)
+
+                                if submit:
+                                    updated_count = 0
+                                    for ticker, new_price in price_updates.items():
+                                        if new_price > 0:
+                                            if db.update_current_price(ticker, float(new_price)):
+                                                updated_count += 1
+
+                                    st.success(f"✅ {updated_count}개 종목의 현재가가 업데이트되었습니다!")
+                                    st.session_state.manual_update_mode = False
+                                    st.rerun()
+
+                                if cancel:
+                                    st.session_state.manual_update_mode = False
+                                    st.rerun()
+
+                    st.markdown("---")
 
                 with TradingJournalDB(db_path) as db:
                     aggregated = db.get_aggregated_positions()
@@ -1613,7 +1686,34 @@ asyncio.run(run())
 
             # 왼쪽: 보유 종목 목록
             with col_left:
-                st.markdown("### 💼 보유 종목 목록")
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown("### 💼 보유 종목 목록")
+                with col2:
+                    refresh_sell = st.button("🔄 현재가", key="refresh_sell", use_container_width=True)
+
+                # 현재가 업데이트 처리
+                if refresh_sell and stock is not None:
+                    with st.spinner("현재가를 업데이트하고 있습니다..."):
+                        with TradingJournalDB(db_path) as db:
+                            positions_temp = db.get_open_positions()
+                            tickers_temp = list(set([p['ticker'] for p in positions_temp]))
+
+                            updated_count = 0
+                            for ticker in tickers_temp:
+                                try:
+                                    end_date = datetime.now().strftime("%Y%m%d")
+                                    start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+                                    df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                    if not df.empty:
+                                        current_price = df['종가'].iloc[-1]
+                                        db.update_current_price(ticker, float(current_price))
+                                        updated_count += 1
+                                except:
+                                    continue
+
+                            st.success(f"✅ {updated_count}개 종목 업데이트!")
 
                 with TradingJournalDB(db_path) as db:
                     positions = db.get_open_positions()
