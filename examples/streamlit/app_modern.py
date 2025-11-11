@@ -964,6 +964,8 @@ asyncio.run(run())
 
     def calculate_market_adr(self, date_str, period=20):
         """코스피/코스닥 시장 ADR 계산"""
+        global stock
+
         try:
             # 날짜 파싱
             target_date = datetime.strptime(date_str, "%Y%m%d")
@@ -1000,6 +1002,8 @@ asyncio.run(run())
             ticker: 종목코드
             target_date: 기준일 (datetime 객체 또는 None). None이면 오늘 날짜 사용
         """
+        global stock
+
         if stock is None:
             return None, None, None, None, None, None
 
@@ -1124,6 +1128,8 @@ asyncio.run(run())
 
     def render_buy_records(self):
         """매수 기록 화면"""
+        global stock, TradingJournalDB
+
         self.add_app_header()
 
         st.markdown("## 📊 매수 기록 관리")
@@ -1665,6 +1671,8 @@ asyncio.run(run())
 
     def render_sell_records(self):
         """매도 기록 화면 (분할 뷰: 보유종목 목록 + 매도 폼)"""
+        global stock, TradingJournalDB
+
         self.add_app_header()
 
         st.markdown("## 📉 매도 기록")
