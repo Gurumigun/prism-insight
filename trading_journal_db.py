@@ -8,7 +8,13 @@ import sqlite3
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# pykrx import
+try:
+    from pykrx import stock
+except ImportError:
+    stock = None
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +93,43 @@ class TradingJournalDB:
         self.conn.commit()
         logger.info("데이터베이스 테이블 생성 완료")
 
+    def _get_current_price(self, ticker: str) -> Optional[float]:
+        """
+        pykrx를 사용하여 실시간 현재가 조회
+
+        Args:
+            ticker: 종목코드
+
+        Returns:
+            현재가 (실패 시 None)
+        """
+        if stock is None:
+            logger.warning("pykrx 모듈을 불러올 수 없습니다.")
+            return None
+
+        try:
+            # 오늘 날짜와 최근 7일 데이터 가져오기
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=7)
+
+            df = stock.get_market_ohlcv_by_date(
+                start_date.strftime("%Y%m%d"),
+                end_date.strftime("%Y%m%d"),
+                ticker
+            )
+
+            if df.empty:
+                logger.warning(f"{ticker} 종목의 가격 정보를 가져올 수 없습니다.")
+                return None
+
+            # 가장 최근 종가 반환
+            current_price = df.iloc[-1]['종가']
+            return float(current_price)
+
+        except Exception as e:
+            logger.error(f"{ticker} 종목 현재가 조회 실패: {str(e)}")
+            return None
+
     def get_open_positions(self) -> List[Dict[str, Any]]:
         """
         현재 보유 중인 종목 목록 조회 (미매도 포지션만)
@@ -127,9 +170,19 @@ class TradingJournalDB:
             for row in rows:
                 row_dict = dict(row)
 
+                # 실시간 현재가 조회
+                ticker = row_dict.get('ticker')
+                current_price = self._get_current_price(ticker)
+
+                # 현재가를 가져오지 못한 경우 DB에 저장된 값 사용
+                if current_price is None:
+                    current_price = row_dict.get('current_price', 0)
+                else:
+                    # 실시간 현재가를 row_dict에 업데이트
+                    row_dict['current_price'] = current_price
+
                 # 수익률 계산
                 buy_price = row_dict.get('buy_price', 0)
-                current_price = row_dict.get('current_price', 0)
 
                 if buy_price > 0 and current_price > 0:
                     profit_rate = ((current_price - buy_price) / buy_price) * 100
@@ -186,9 +239,19 @@ class TradingJournalDB:
             for row in rows:
                 row_dict = dict(row)
 
+                # 실시간 현재가 조회
+                ticker = row_dict.get('ticker')
+                current_price = self._get_current_price(ticker)
+
+                # 현재가를 가져오지 못한 경우 DB에 저장된 값 또는 평균 매수가 사용
+                if current_price is None:
+                    current_price = row_dict.get('current_price', row_dict['avg_buy_price'])
+                else:
+                    # 실시간 현재가를 row_dict에 업데이트
+                    row_dict['current_price'] = current_price
+
                 total_quantity = row_dict['total_quantity']
                 avg_buy_price = row_dict['avg_buy_price']
-                current_price = row_dict.get('current_price', avg_buy_price)
 
                 total_value = current_price * total_quantity
                 total_cost = row_dict['total_cost']
@@ -243,12 +306,21 @@ class TradingJournalDB:
 
             rows = self.cursor.fetchall()
 
+            # 실시간 현재가를 한 번만 조회 (같은 ticker이므로)
+            current_price_live = self._get_current_price(ticker)
+
             details = []
             for row in rows:
                 row_dict = dict(row)
 
+                # 실시간 현재가 사용, 가져오지 못한 경우 DB 값 사용
+                if current_price_live is not None:
+                    current_price = current_price_live
+                    row_dict['current_price'] = current_price
+                else:
+                    current_price = row_dict.get('current_price', 0)
+
                 buy_price = row_dict.get('buy_price', 0)
-                current_price = row_dict.get('current_price', 0)
 
                 if buy_price > 0 and current_price > 0:
                     profit_rate = ((current_price - buy_price) / buy_price) * 100
