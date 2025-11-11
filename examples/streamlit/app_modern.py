@@ -1415,6 +1415,34 @@ asyncio.run(run())
                 # 데이터베이스 경로를 project_root로 명시
                 db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
 
+                # 탭 진입 시 자동으로 1회 업데이트 (pykrx 사용 가능한 경우에만)
+                if 'buy_records_auto_updated' not in st.session_state and stock is not None:
+                    with st.spinner("💡 현재가를 자동으로 업데이트하는 중..."):
+                        with TradingJournalDB(db_path) as db:
+                            positions = db.get_open_positions()
+                            if positions:  # 보유 종목이 있을 때만
+                                tickers = list(set([p['ticker'] for p in positions]))
+                                updated_count = 0
+                                for ticker in tickers:
+                                    try:
+                                        end_date = datetime.now().strftime("%Y%m%d")
+                                        start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+                                        df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                        if not df.empty:
+                                            current_price = df['종가'].iloc[-1]
+                                            db.cursor.execute("""
+                                                UPDATE stock_holdings
+                                                SET current_price = ?, last_updated = ?
+                                                WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+                                            """, (current_price, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ticker))
+                                            updated_count += 1
+                                    except:
+                                        continue
+                                db.conn.commit()
+                                if updated_count > 0:
+                                    st.info(f"✅ {updated_count}개 종목의 현재가가 자동 업데이트되었습니다!")
+                    st.session_state.buy_records_auto_updated = True
+
                 # 현재가 업데이트가 요청되었을 때
                 if refresh_button and stock is not None:
                     with st.spinner("현재가를 업데이트하고 있습니다..."):
@@ -1477,10 +1505,19 @@ asyncio.run(run())
                                 st.markdown("#### 현재가 입력")
 
                                 price_updates = {}
-                                for stock in unique_stocks:
-                                    ticker = stock['ticker']
-                                    company_name = stock['company_name']
-                                    current_price = stock['current_price']
+                                for stock_row in unique_stocks:
+                                    ticker = stock_row['ticker']
+                                    company_name = stock_row['company_name']
+                                    current_price = stock_row['current_price']
+
+                                    # current_price를 float로 변환 (bytes 타입 대응)
+                                    try:
+                                        if isinstance(current_price, bytes):
+                                            current_price = float(current_price.decode())
+                                        else:
+                                            current_price = float(current_price) if current_price else 0.0
+                                    except:
+                                        current_price = 0.0
 
                                     col1, col2 = st.columns([3, 2])
                                     with col1:
@@ -1490,12 +1527,14 @@ asyncio.run(run())
                                         new_price = st.number_input(
                                             "새 현재가 (원)",
                                             min_value=0,
-                                            value=int(current_price) if current_price else 0,
+                                            value=int(current_price),
                                             step=100,
                                             key=f"price_{ticker}",
                                             label_visibility="collapsed"
                                         )
                                         price_updates[ticker] = new_price
+
+                                st.markdown("")  # 간격 추가
 
                                 col1, col2, col3 = st.columns([1, 1, 1])
                                 with col1:
@@ -1688,6 +1727,29 @@ asyncio.run(run())
         try:
             # 데이터베이스 경로를 project_root로 명시
             db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+            # 탭 진입 시 자동으로 1회 업데이트 (pykrx 사용 가능한 경우에만)
+            if 'sell_records_auto_updated' not in st.session_state and stock is not None:
+                with st.spinner("💡 현재가를 자동으로 업데이트하는 중..."):
+                    with TradingJournalDB(db_path) as db:
+                        positions = db.get_open_positions()
+                        if positions:  # 보유 종목이 있을 때만
+                            tickers = list(set([p['ticker'] for p in positions]))
+                            updated_count = 0
+                            for ticker in tickers:
+                                try:
+                                    end_date = datetime.now().strftime("%Y%m%d")
+                                    start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+                                    df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                    if not df.empty:
+                                        current_price = df['종가'].iloc[-1]
+                                        db.update_current_price(ticker, float(current_price))
+                                        updated_count += 1
+                                except:
+                                    continue
+                            if updated_count > 0:
+                                st.info(f"✅ {updated_count}개 종목의 현재가가 자동 업데이트되었습니다!")
+                st.session_state.sell_records_auto_updated = True
 
             # 화면 분할: 왼쪽(보유종목), 오른쪽(매도 폼)
             col_left, col_right = st.columns([1, 1])
