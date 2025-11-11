@@ -102,63 +102,129 @@ class TradingJournalDB:
         (여러 번 매수를 지원하기 위해)
         """
         try:
-            # 기존 테이블 구조 확인
-            self.cursor.execute("PRAGMA table_info(stock_holdings)")
-            columns = self.cursor.fetchall()
+            # 테이블이 존재하는지 확인
+            self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
+            table_exists = self.cursor.fetchone()
 
-            # UNIQUE 제약이 있는지 확인
+            if not table_exists:
+                logger.info("stock_holdings 테이블이 없어서 마이그레이션을 건너뜁니다.")
+                return
+
+            # 기존 테이블 스키마 확인
             self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
             result = self.cursor.fetchone()
 
-            if result and 'UNIQUE' in result[0]:
-                logger.info("UNIQUE 제약이 발견되어 마이그레이션을 시작합니다...")
+            if not result:
+                logger.info("테이블 스키마를 가져올 수 없어서 마이그레이션을 건너뜁니다.")
+                return
 
-                # 기존 데이터 백업
-                self.cursor.execute("""
-                    CREATE TEMP TABLE stock_holdings_backup AS
-                    SELECT * FROM stock_holdings
+            current_schema = result[0]
+            logger.info(f"현재 테이블 스키마: {current_schema}")
+
+            # UNIQUE 제약 확인 (CREATE TABLE 문이나 인덱스 확인)
+            has_unique_constraint = 'UNIQUE' in current_schema.upper()
+
+            # 인덱스에서도 UNIQUE 제약 확인
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='stock_holdings'")
+            indexes = self.cursor.fetchall()
+            for idx in indexes:
+                if idx[0] and 'UNIQUE' in idx[0].upper():
+                    has_unique_constraint = True
+                    logger.info(f"UNIQUE 인덱스 발견: {idx[0]}")
+                    break
+
+            # id 컬럼이 없는 경우에도 마이그레이션 필요
+            has_id_column = 'id INTEGER PRIMARY KEY AUTOINCREMENT' in current_schema
+
+            needs_migration = has_unique_constraint or not has_id_column
+
+            if not needs_migration:
+                logger.info("마이그레이션이 필요하지 않습니다. (UNIQUE 제약 없음)")
+                return
+
+            logger.info("⚠️  UNIQUE 제약 또는 잘못된 스키마가 발견되어 마이그레이션을 시작합니다...")
+
+            # 기존 데이터 백업
+            self.cursor.execute("""
+                CREATE TEMP TABLE stock_holdings_backup AS
+                SELECT * FROM stock_holdings
+            """)
+            backup_count = self.cursor.execute("SELECT COUNT(*) FROM stock_holdings_backup").fetchone()[0]
+            logger.info(f"📦 기존 데이터 {backup_count}건 백업 완료")
+
+            # 기존 인덱스 삭제
+            for idx in indexes:
+                if idx[0]:
+                    try:
+                        idx_name = idx[0].split('CREATE')[1].split('INDEX')[1].split('ON')[0].strip()
+                        self.cursor.execute(f"DROP INDEX IF EXISTS {idx_name}")
+                    except:
+                        pass
+
+            # 기존 테이블 삭제
+            self.cursor.execute("DROP TABLE stock_holdings")
+            logger.info("🗑️  기존 테이블 삭제 완료")
+
+            # 새 테이블 생성 (UNIQUE 제약 없이)
+            self.cursor.execute("""
+                CREATE TABLE stock_holdings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker TEXT NOT NULL,
+                    company_name TEXT NOT NULL,
+                    buy_price REAL NOT NULL,
+                    buy_date TEXT NOT NULL,
+                    quantity INTEGER DEFAULT 1,
+                    current_price REAL,
+                    last_updated TEXT,
+                    scenario TEXT,
+                    rsi REAL,
+                    macd REAL,
+                    adr REAL,
+                    market_kospi_adr REAL,
+                    market_kosdaq_adr REAL,
+                    is_sold INTEGER DEFAULT 0,
+                    sell_price REAL,
+                    sell_date TEXT
+                )
+            """)
+            logger.info("✨ 새 테이블 생성 완료 (UNIQUE 제약 제거됨)")
+
+            # 백업 테이블의 컬럼 확인
+            self.cursor.execute("PRAGMA table_info(stock_holdings_backup)")
+            backup_columns = [col[1] for col in self.cursor.fetchall()]
+
+            # 새 테이블의 컬럼 확인
+            self.cursor.execute("PRAGMA table_info(stock_holdings)")
+            new_columns = [col[1] for col in self.cursor.fetchall()]
+
+            # 공통 컬럼만 복사 (id는 자동 생성되므로 제외)
+            common_columns = [col for col in backup_columns if col in new_columns and col != 'id']
+            columns_str = ', '.join(common_columns)
+
+            # 데이터 복원
+            if common_columns:
+                self.cursor.execute(f"""
+                    INSERT INTO stock_holdings ({columns_str})
+                    SELECT {columns_str} FROM stock_holdings_backup
                 """)
+                restored_count = self.cursor.execute("SELECT COUNT(*) FROM stock_holdings").fetchone()[0]
+                logger.info(f"📥 데이터 {restored_count}건 복원 완료")
 
-                # 기존 테이블 삭제
-                self.cursor.execute("DROP TABLE stock_holdings")
+            # 임시 테이블 삭제
+            self.cursor.execute("DROP TABLE stock_holdings_backup")
 
-                # 새 테이블 생성 (UNIQUE 제약 없이)
-                self.cursor.execute("""
-                    CREATE TABLE stock_holdings (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        ticker TEXT NOT NULL,
-                        company_name TEXT NOT NULL,
-                        buy_price REAL NOT NULL,
-                        buy_date TEXT NOT NULL,
-                        quantity INTEGER DEFAULT 1,
-                        current_price REAL,
-                        last_updated TEXT,
-                        scenario TEXT,
-                        rsi REAL,
-                        macd REAL,
-                        adr REAL,
-                        market_kospi_adr REAL,
-                        market_kosdaq_adr REAL,
-                        is_sold INTEGER DEFAULT 0,
-                        sell_price REAL,
-                        sell_date TEXT
-                    )
-                """)
-
-                # 데이터 복원
-                self.cursor.execute("""
-                    INSERT INTO stock_holdings
-                    SELECT * FROM stock_holdings_backup
-                """)
-
-                # 임시 테이블 삭제
-                self.cursor.execute("DROP TABLE stock_holdings_backup")
-
-                self.conn.commit()
-                logger.info("✅ 마이그레이션 완료: UNIQUE 제약 제거됨. 이제 같은 종목을 여러 번 매수할 수 있습니다.")
+            self.conn.commit()
+            logger.info("✅ 마이그레이션 완료: UNIQUE 제약이 제거되었습니다. 이제 같은 종목을 여러 번 매수할 수 있습니다!")
 
         except Exception as e:
-            logger.warning(f"마이그레이션 중 오류 (무시 가능): {str(e)}")
+            logger.error(f"❌ 마이그레이션 중 오류 발생: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # 마이그레이션 실패 시 롤백
+            try:
+                self.conn.rollback()
+            except:
+                pass
 
     def _get_current_price(self, ticker: str) -> Optional[float]:
         """
