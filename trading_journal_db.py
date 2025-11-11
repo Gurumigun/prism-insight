@@ -8,7 +8,13 @@ import sqlite3
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# pykrx import
+try:
+    from pykrx import stock
+except ImportError:
+    stock = None
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,9 @@ class TradingJournalDB:
 
     def _create_tables(self):
         """필요한 테이블들을 자동으로 생성"""
+        # 먼저 마이그레이션 체크 (기존 테이블이 잘못된 스키마를 가진 경우)
+        self._migrate_remove_unique_constraint()
+
         # stock_holdings 테이블 생성 (여러 번 매수 가능하도록 id 추가)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS stock_holdings (
@@ -87,6 +96,216 @@ class TradingJournalDB:
         self.conn.commit()
         logger.info("데이터베이스 테이블 생성 완료")
 
+        # 마이그레이션 후 다시 한 번 체크 (혹시 모를 문제 대비)
+        self._validate_schema()
+
+    def _migrate_remove_unique_constraint(self):
+        """
+        기존 stock_holdings 테이블의 ticker UNIQUE 제약 제거
+        (여러 번 매수를 지원하기 위해)
+        """
+        try:
+            # 테이블이 존재하는지 확인
+            self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
+            table_exists = self.cursor.fetchone()
+
+            if not table_exists:
+                logger.info("stock_holdings 테이블이 없어서 마이그레이션을 건너뜁니다.")
+                return
+
+            # 기존 테이블 스키마 확인
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
+            result = self.cursor.fetchone()
+
+            if not result:
+                logger.info("테이블 스키마를 가져올 수 없어서 마이그레이션을 건너뜁니다.")
+                return
+
+            current_schema = result[0]
+            logger.info(f"현재 테이블 스키마: {current_schema}")
+
+            # UNIQUE 제약 확인 (CREATE TABLE 문이나 인덱스 확인)
+            has_unique_constraint = 'UNIQUE' in current_schema.upper()
+
+            # 인덱스에서도 UNIQUE 제약 확인
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='stock_holdings'")
+            indexes = self.cursor.fetchall()
+            for idx in indexes:
+                if idx[0] and 'UNIQUE' in idx[0].upper():
+                    has_unique_constraint = True
+                    logger.info(f"UNIQUE 인덱스 발견: {idx[0]}")
+                    break
+
+            # id 컬럼이 없는 경우에도 마이그레이션 필요
+            has_id_column = 'id INTEGER PRIMARY KEY AUTOINCREMENT' in current_schema
+
+            needs_migration = has_unique_constraint or not has_id_column
+
+            if not needs_migration:
+                logger.info("마이그레이션이 필요하지 않습니다. (UNIQUE 제약 없음)")
+                return
+
+            logger.info("⚠️  UNIQUE 제약 또는 잘못된 스키마가 발견되어 마이그레이션을 시작합니다...")
+
+            # 기존 데이터 백업
+            self.cursor.execute("""
+                CREATE TEMP TABLE stock_holdings_backup AS
+                SELECT * FROM stock_holdings
+            """)
+            backup_count = self.cursor.execute("SELECT COUNT(*) FROM stock_holdings_backup").fetchone()[0]
+            logger.info(f"📦 기존 데이터 {backup_count}건 백업 완료")
+
+            # 기존 인덱스 삭제
+            for idx in indexes:
+                if idx[0]:
+                    try:
+                        idx_name = idx[0].split('CREATE')[1].split('INDEX')[1].split('ON')[0].strip()
+                        self.cursor.execute(f"DROP INDEX IF EXISTS {idx_name}")
+                    except:
+                        pass
+
+            # 기존 테이블 삭제
+            self.cursor.execute("DROP TABLE stock_holdings")
+            logger.info("🗑️  기존 테이블 삭제 완료")
+
+            # 새 테이블 생성 (UNIQUE 제약 없이)
+            self.cursor.execute("""
+                CREATE TABLE stock_holdings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker TEXT NOT NULL,
+                    company_name TEXT NOT NULL,
+                    buy_price REAL NOT NULL,
+                    buy_date TEXT NOT NULL,
+                    quantity INTEGER DEFAULT 1,
+                    current_price REAL,
+                    last_updated TEXT,
+                    scenario TEXT,
+                    rsi REAL,
+                    macd REAL,
+                    adr REAL,
+                    market_kospi_adr REAL,
+                    market_kosdaq_adr REAL,
+                    is_sold INTEGER DEFAULT 0,
+                    sell_price REAL,
+                    sell_date TEXT
+                )
+            """)
+            logger.info("✨ 새 테이블 생성 완료 (UNIQUE 제약 제거됨)")
+
+            # 백업 테이블의 컬럼 확인
+            self.cursor.execute("PRAGMA table_info(stock_holdings_backup)")
+            backup_columns = [col[1] for col in self.cursor.fetchall()]
+
+            # 새 테이블의 컬럼 확인
+            self.cursor.execute("PRAGMA table_info(stock_holdings)")
+            new_columns = [col[1] for col in self.cursor.fetchall()]
+
+            # 공통 컬럼만 복사 (id는 자동 생성되므로 제외)
+            common_columns = [col for col in backup_columns if col in new_columns and col != 'id']
+            columns_str = ', '.join(common_columns)
+
+            # 데이터 복원
+            if common_columns:
+                self.cursor.execute(f"""
+                    INSERT INTO stock_holdings ({columns_str})
+                    SELECT {columns_str} FROM stock_holdings_backup
+                """)
+                restored_count = self.cursor.execute("SELECT COUNT(*) FROM stock_holdings").fetchone()[0]
+                logger.info(f"📥 데이터 {restored_count}건 복원 완료")
+
+            # 임시 테이블 삭제
+            self.cursor.execute("DROP TABLE stock_holdings_backup")
+
+            self.conn.commit()
+            logger.info("✅ 마이그레이션 완료: UNIQUE 제약이 제거되었습니다. 이제 같은 종목을 여러 번 매수할 수 있습니다!")
+
+        except Exception as e:
+            logger.error(f"❌ 마이그레이션 중 오류 발생: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # 마이그레이션 실패 시 롤백
+            try:
+                self.conn.rollback()
+            except:
+                pass
+
+    def _validate_schema(self):
+        """
+        테이블 스키마가 올바른지 검증
+        """
+        try:
+            # stock_holdings 테이블 스키마 확인
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
+            result = self.cursor.fetchone()
+
+            if not result:
+                logger.warning("⚠️  stock_holdings 테이블을 찾을 수 없습니다.")
+                return
+
+            current_schema = result[0]
+
+            # 필수 요구사항 체크
+            has_id_pk = 'id INTEGER PRIMARY KEY AUTOINCREMENT' in current_schema
+            has_unique = 'UNIQUE' in current_schema.upper()
+
+            # UNIQUE 인덱스 체크
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='stock_holdings'")
+            indexes = self.cursor.fetchall()
+            for idx in indexes:
+                if idx[0] and 'UNIQUE' in idx[0].upper():
+                    has_unique = True
+
+            if not has_id_pk:
+                logger.error("❌ stock_holdings 테이블에 id PRIMARY KEY가 없습니다!")
+                logger.error("   데이터베이스 파일을 삭제하고 다시 시도하거나 관리자에게 문의하세요.")
+
+            if has_unique:
+                logger.error("❌ stock_holdings 테이블에 UNIQUE 제약이 여전히 존재합니다!")
+                logger.error("   데이터베이스 파일을 삭제하고 다시 시도하거나 관리자에게 문의하세요.")
+
+            if has_id_pk and not has_unique:
+                logger.info("✅ 테이블 스키마 검증 완료: 올바른 스키마입니다.")
+
+        except Exception as e:
+            logger.warning(f"스키마 검증 중 오류 (무시 가능): {str(e)}")
+
+    def _get_current_price(self, ticker: str) -> Optional[float]:
+        """
+        pykrx를 사용하여 실시간 현재가 조회
+
+        Args:
+            ticker: 종목코드
+
+        Returns:
+            현재가 (실패 시 None)
+        """
+        if stock is None:
+            logger.warning("pykrx 모듈을 불러올 수 없습니다.")
+            return None
+
+        try:
+            # 오늘 날짜와 최근 7일 데이터 가져오기
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=7)
+
+            df = stock.get_market_ohlcv_by_date(
+                start_date.strftime("%Y%m%d"),
+                end_date.strftime("%Y%m%d"),
+                ticker
+            )
+
+            if df.empty:
+                logger.warning(f"{ticker} 종목의 가격 정보를 가져올 수 없습니다.")
+                return None
+
+            # 가장 최근 종가 반환
+            current_price = df.iloc[-1]['종가']
+            return float(current_price)
+
+        except Exception as e:
+            logger.error(f"{ticker} 종목 현재가 조회 실패: {str(e)}")
+            return None
+
     def get_open_positions(self) -> List[Dict[str, Any]]:
         """
         현재 보유 중인 종목 목록 조회 (미매도 포지션만)
@@ -127,9 +346,19 @@ class TradingJournalDB:
             for row in rows:
                 row_dict = dict(row)
 
+                # 실시간 현재가 조회
+                ticker = row_dict.get('ticker')
+                current_price = self._get_current_price(ticker)
+
+                # 현재가를 가져오지 못한 경우 DB에 저장된 값 사용
+                if current_price is None:
+                    current_price = row_dict.get('current_price', 0)
+                else:
+                    # 실시간 현재가를 row_dict에 업데이트
+                    row_dict['current_price'] = current_price
+
                 # 수익률 계산
                 buy_price = row_dict.get('buy_price', 0)
-                current_price = row_dict.get('current_price', 0)
 
                 if buy_price > 0 and current_price > 0:
                     profit_rate = ((current_price - buy_price) / buy_price) * 100
@@ -186,9 +415,19 @@ class TradingJournalDB:
             for row in rows:
                 row_dict = dict(row)
 
+                # 실시간 현재가 조회
+                ticker = row_dict.get('ticker')
+                current_price = self._get_current_price(ticker)
+
+                # 현재가를 가져오지 못한 경우 DB에 저장된 값 또는 평균 매수가 사용
+                if current_price is None:
+                    current_price = row_dict.get('current_price', row_dict['avg_buy_price'])
+                else:
+                    # 실시간 현재가를 row_dict에 업데이트
+                    row_dict['current_price'] = current_price
+
                 total_quantity = row_dict['total_quantity']
                 avg_buy_price = row_dict['avg_buy_price']
-                current_price = row_dict.get('current_price', avg_buy_price)
 
                 total_value = current_price * total_quantity
                 total_cost = row_dict['total_cost']
@@ -243,12 +482,21 @@ class TradingJournalDB:
 
             rows = self.cursor.fetchall()
 
+            # 실시간 현재가를 한 번만 조회 (같은 ticker이므로)
+            current_price_live = self._get_current_price(ticker)
+
             details = []
             for row in rows:
                 row_dict = dict(row)
 
+                # 실시간 현재가 사용, 가져오지 못한 경우 DB 값 사용
+                if current_price_live is not None:
+                    current_price = current_price_live
+                    row_dict['current_price'] = current_price
+                else:
+                    current_price = row_dict.get('current_price', 0)
+
                 buy_price = row_dict.get('buy_price', 0)
-                current_price = row_dict.get('current_price', 0)
 
                 if buy_price > 0 and current_price > 0:
                     profit_rate = ((current_price - buy_price) / buy_price) * 100
@@ -509,6 +757,96 @@ class TradingJournalDB:
             logger.error(f"매수 기록 저장 실패: {str(e)}")
             return False
 
+    def update_current_price(self, ticker: str, new_price: float) -> bool:
+        """
+        특정 종목의 현재가를 수동으로 업데이트
+
+        Args:
+            ticker: 종목코드
+            new_price: 새로운 현재가
+
+        Returns:
+            성공 여부
+        """
+        try:
+            # 해당 종목의 모든 미매도 포지션의 current_price 업데이트
+            self.cursor.execute("""
+                UPDATE stock_holdings
+                SET current_price = ?, last_updated = ?
+                WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+            """, (new_price, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ticker))
+
+            updated_count = self.cursor.rowcount
+            self.conn.commit()
+
+            logger.info(f"{ticker} 종목의 현재가 업데이트 완료: {new_price}원 ({updated_count}건)")
+            return True
+
+        except Exception as e:
+            logger.error(f"현재가 업데이트 실패: {str(e)}")
+            return False
+
+    def update_all_current_prices_from_pykrx(self) -> Dict[str, Any]:
+        """
+        모든 보유 종목의 현재가를 pykrx로 한번에 업데이트
+
+        Returns:
+            업데이트 결과 {"success": 성공 개수, "failed": 실패 개수, "details": [...]}
+        """
+        result = {
+            "success": 0,
+            "failed": 0,
+            "details": []
+        }
+
+        try:
+            # 미매도 종목 목록 조회 (중복 제거)
+            self.cursor.execute("""
+                SELECT DISTINCT ticker, company_name
+                FROM stock_holdings
+                WHERE is_sold = 0 OR is_sold IS NULL
+            """)
+
+            tickers = self.cursor.fetchall()
+
+            for row in tickers:
+                ticker = row['ticker']
+                company_name = row['company_name']
+
+                # pykrx로 현재가 조회
+                current_price = self._get_current_price(ticker)
+
+                if current_price is not None:
+                    # 현재가 업데이트
+                    if self.update_current_price(ticker, current_price):
+                        result["success"] += 1
+                        result["details"].append({
+                            "ticker": ticker,
+                            "company_name": company_name,
+                            "price": current_price,
+                            "status": "success"
+                        })
+                    else:
+                        result["failed"] += 1
+                        result["details"].append({
+                            "ticker": ticker,
+                            "company_name": company_name,
+                            "status": "update_failed"
+                        })
+                else:
+                    result["failed"] += 1
+                    result["details"].append({
+                        "ticker": ticker,
+                        "company_name": company_name,
+                        "status": "price_fetch_failed"
+                    })
+
+            return result
+
+        except Exception as e:
+            logger.error(f"일괄 현재가 업데이트 실패: {str(e)}")
+            return result
+
     def sell_position(
         self,
         position_id: int,
@@ -529,6 +867,12 @@ class TradingJournalDB:
             성공 여부
         """
         try:
+            # position_id 유효성 검증
+            if position_id is None:
+                logger.error("❌ 포지션 ID가 None입니다. 데이터베이스 스키마에 id 컬럼이 없을 수 있습니다.")
+                logger.error("   해결 방법: 데이터베이스 파일을 삭제하고 앱을 다시 시작하세요.")
+                return False
+
             # 해당 포지션 조회
             self.cursor.execute("""
                 SELECT id, ticker, company_name, buy_price, buy_date, quantity,
@@ -540,6 +884,7 @@ class TradingJournalDB:
             position = self.cursor.fetchone()
             if not position:
                 logger.error(f"포지션을 찾을 수 없습니다: ID {position_id}")
+                logger.error("   보유 종목 목록을 다시 확인해주세요.")
                 return False
 
             position_dict = dict(position)

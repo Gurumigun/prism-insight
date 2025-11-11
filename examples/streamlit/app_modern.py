@@ -964,6 +964,8 @@ asyncio.run(run())
 
     def calculate_market_adr(self, date_str, period=20):
         """코스피/코스닥 시장 ADR 계산"""
+        global stock
+
         try:
             # 날짜 파싱
             target_date = datetime.strptime(date_str, "%Y%m%d")
@@ -1000,6 +1002,8 @@ asyncio.run(run())
             ticker: 종목코드
             target_date: 기준일 (datetime 객체 또는 None). None이면 오늘 날짜 사용
         """
+        global stock
+
         if stock is None:
             return None, None, None, None, None, None
 
@@ -1124,6 +1128,8 @@ asyncio.run(run())
 
     def render_buy_records(self):
         """매수 기록 화면"""
+        global stock, TradingJournalDB
+
         self.add_app_header()
 
         st.markdown("## 📊 매수 기록 관리")
@@ -1399,13 +1405,43 @@ asyncio.run(run())
             st.markdown("### 💼 보유 종목 조회")
 
             # 현재가 업데이트 버튼
-            col1, col2 = st.columns([5, 1])
+            col1, col2, col3 = st.columns([4, 1, 1])
             with col2:
-                refresh_button = st.button("🔄 현재가 업데이트", use_container_width=True)
+                refresh_button = st.button("🔄 자동 업데이트", use_container_width=True)
+            with col3:
+                manual_update = st.button("✏️ 수동 입력", use_container_width=True)
 
             try:
                 # 데이터베이스 경로를 project_root로 명시
                 db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+                # 탭 진입 시 자동으로 1회 업데이트 (pykrx 사용 가능한 경우에만)
+                if 'buy_records_auto_updated' not in st.session_state and stock is not None:
+                    with st.spinner("💡 현재가를 자동으로 업데이트하는 중..."):
+                        with TradingJournalDB(db_path) as db:
+                            positions = db.get_open_positions()
+                            if positions:  # 보유 종목이 있을 때만
+                                tickers = list(set([p['ticker'] for p in positions]))
+                                updated_count = 0
+                                for ticker in tickers:
+                                    try:
+                                        end_date = datetime.now().strftime("%Y%m%d")
+                                        start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+                                        df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                        if not df.empty:
+                                            current_price = df['종가'].iloc[-1]
+                                            db.cursor.execute("""
+                                                UPDATE stock_holdings
+                                                SET current_price = ?, last_updated = ?
+                                                WHERE ticker = ? AND (is_sold = 0 OR is_sold IS NULL)
+                                            """, (current_price, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ticker))
+                                            updated_count += 1
+                                    except:
+                                        continue
+                                db.conn.commit()
+                                if updated_count > 0:
+                                    st.info(f"✅ {updated_count}개 종목의 현재가가 자동 업데이트되었습니다!")
+                    st.session_state.buy_records_auto_updated = True
 
                 # 현재가 업데이트가 요청되었을 때
                 if refresh_button and stock is not None:
@@ -1440,6 +1476,88 @@ asyncio.run(run())
 
                             db.conn.commit()
                             st.success(f"✅ {updated_count}개 종목의 현재가가 업데이트되었습니다!")
+
+                # 수동 업데이트 모드
+                if manual_update:
+                    st.session_state.manual_update_mode = True
+
+                # 수동 업데이트 폼 표시
+                if st.session_state.get('manual_update_mode', False):
+                    st.markdown("---")
+                    st.markdown("### ✏️ 수동 현재가 입력")
+                    st.markdown("종목별로 현재가를 직접 입력하세요.")
+
+                    with TradingJournalDB(db_path) as db:
+                        # 중복 제거된 종목 리스트
+                        db.cursor.execute("""
+                            SELECT DISTINCT ticker, company_name,
+                                   MAX(current_price) as current_price
+                            FROM stock_holdings
+                            WHERE is_sold = 0 OR is_sold IS NULL
+                            GROUP BY ticker
+                        """)
+                        unique_stocks = db.cursor.fetchall()
+
+                        if not unique_stocks:
+                            st.info("보유 종목이 없습니다.")
+                        else:
+                            with st.form("manual_price_update_form"):
+                                st.markdown("#### 현재가 입력")
+
+                                price_updates = {}
+                                for stock_row in unique_stocks:
+                                    ticker = stock_row['ticker']
+                                    company_name = stock_row['company_name']
+                                    current_price = stock_row['current_price']
+
+                                    # current_price를 float로 변환 (bytes 타입 대응)
+                                    try:
+                                        if isinstance(current_price, bytes):
+                                            current_price = float(current_price.decode())
+                                        else:
+                                            current_price = float(current_price) if current_price else 0.0
+                                    except:
+                                        current_price = 0.0
+
+                                    col1, col2 = st.columns([3, 2])
+                                    with col1:
+                                        st.markdown(f"**{company_name} ({ticker})**")
+                                        st.caption(f"현재 DB 저장값: {current_price:,.0f}원")
+                                    with col2:
+                                        new_price = st.number_input(
+                                            "새 현재가 (원)",
+                                            min_value=0,
+                                            value=int(current_price),
+                                            step=100,
+                                            key=f"price_{ticker}",
+                                            label_visibility="collapsed"
+                                        )
+                                        price_updates[ticker] = new_price
+
+                                st.markdown("")  # 간격 추가
+
+                                col1, col2, col3 = st.columns([1, 1, 1])
+                                with col1:
+                                    submit = st.form_submit_button("💾 저장", use_container_width=True)
+                                with col2:
+                                    cancel = st.form_submit_button("❌ 취소", use_container_width=True)
+
+                                if submit:
+                                    updated_count = 0
+                                    for ticker, new_price in price_updates.items():
+                                        if new_price > 0:
+                                            if db.update_current_price(ticker, float(new_price)):
+                                                updated_count += 1
+
+                                    st.success(f"✅ {updated_count}개 종목의 현재가가 업데이트되었습니다!")
+                                    st.session_state.manual_update_mode = False
+                                    st.rerun()
+
+                                if cancel:
+                                    st.session_state.manual_update_mode = False
+                                    st.rerun()
+
+                    st.markdown("---")
 
                 with TradingJournalDB(db_path) as db:
                     aggregated = db.get_aggregated_positions()
@@ -1592,6 +1710,8 @@ asyncio.run(run())
 
     def render_sell_records(self):
         """매도 기록 화면 (분할 뷰: 보유종목 목록 + 매도 폼)"""
+        global stock, TradingJournalDB
+
         self.add_app_header()
 
         st.markdown("## 📉 매도 기록")
@@ -1608,12 +1728,62 @@ asyncio.run(run())
             # 데이터베이스 경로를 project_root로 명시
             db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
 
+            # 탭 진입 시 자동으로 1회 업데이트 (pykrx 사용 가능한 경우에만)
+            if 'sell_records_auto_updated' not in st.session_state and stock is not None:
+                with st.spinner("💡 현재가를 자동으로 업데이트하는 중..."):
+                    with TradingJournalDB(db_path) as db:
+                        positions = db.get_open_positions()
+                        if positions:  # 보유 종목이 있을 때만
+                            tickers = list(set([p['ticker'] for p in positions]))
+                            updated_count = 0
+                            for ticker in tickers:
+                                try:
+                                    end_date = datetime.now().strftime("%Y%m%d")
+                                    start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+                                    df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                    if not df.empty:
+                                        current_price = df['종가'].iloc[-1]
+                                        db.update_current_price(ticker, float(current_price))
+                                        updated_count += 1
+                                except:
+                                    continue
+                            if updated_count > 0:
+                                st.info(f"✅ {updated_count}개 종목의 현재가가 자동 업데이트되었습니다!")
+                st.session_state.sell_records_auto_updated = True
+
             # 화면 분할: 왼쪽(보유종목), 오른쪽(매도 폼)
             col_left, col_right = st.columns([1, 1])
 
             # 왼쪽: 보유 종목 목록
             with col_left:
-                st.markdown("### 💼 보유 종목 목록")
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown("### 💼 보유 종목 목록")
+                with col2:
+                    refresh_sell = st.button("🔄 현재가", key="refresh_sell", use_container_width=True)
+
+                # 현재가 업데이트 처리
+                if refresh_sell and stock is not None:
+                    with st.spinner("현재가를 업데이트하고 있습니다..."):
+                        with TradingJournalDB(db_path) as db:
+                            positions_temp = db.get_open_positions()
+                            tickers_temp = list(set([p['ticker'] for p in positions_temp]))
+
+                            updated_count = 0
+                            for ticker in tickers_temp:
+                                try:
+                                    end_date = datetime.now().strftime("%Y%m%d")
+                                    start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+                                    df = stock.get_market_ohlcv_by_date(start_date, end_date, ticker)
+                                    if not df.empty:
+                                        current_price = df['종가'].iloc[-1]
+                                        db.update_current_price(ticker, float(current_price))
+                                        updated_count += 1
+                                except:
+                                    continue
+
+                            st.success(f"✅ {updated_count}개 종목 업데이트!")
 
                 with TradingJournalDB(db_path) as db:
                     positions = db.get_open_positions()
@@ -1621,39 +1791,62 @@ asyncio.run(run())
                     if not positions:
                         st.info("📭 현재 보유 중인 종목이 없습니다.")
                     else:
-                        st.markdown(f"**총 {len(positions)}건의 보유 내역**")
+                        st.markdown(f"### 💼 보유 종목 ({len(positions)}건)")
+                        st.markdown("매도할 종목을 선택하세요")
 
-                        # 선택 가능한 포지션 목록
-                        position_options = {}
-                        for pos in positions:
+                        # session_state에 선택된 포지션 저장
+                        if 'selected_position_id' not in st.session_state:
+                            st.session_state.selected_position_id = None
+
+                        # 각 포지션을 카드 형식의 버튼으로 표시
+                        for idx, pos in enumerate(positions):
                             profit_rate = pos['profit_rate']
-                            label = f"{pos['company_name']} ({pos['ticker']}) | {pos['quantity']}주 | 매수가: {pos['buy_price']:,.0f}원 | 수익률: {profit_rate:+.2f}%"
-                            position_options[label] = pos
+                            is_selected = st.session_state.selected_position_id == pos.get('id')
 
-                        # 선택된 포지션 저장 (radio button)
-                        selected_label = st.radio(
-                            "매도할 종목을 선택하세요",
-                            list(position_options.keys()),
-                            key="selected_position_radio"
-                        )
+                            # 수익률에 따른 색상 결정
+                            if profit_rate > 0:
+                                profit_color = "🟢"
+                                profit_emoji = "📈"
+                            elif profit_rate < 0:
+                                profit_color = "🔴"
+                                profit_emoji = "📉"
+                            else:
+                                profit_color = "⚪"
+                                profit_emoji = "➖"
 
-                        if selected_label:
-                            selected_position = position_options[selected_label]
+                            # 선택된 포지션은 primary 버튼으로 표시
+                            button_type = "primary" if is_selected else "secondary"
 
-                            # 선택된 포지션 상세 정보 표시
-                            with st.expander("📊 선택된 종목 상세 정보", expanded=True):
-                                st.markdown(f"**종목명:** {selected_position['company_name']}")
-                                st.markdown(f"**종목코드:** {selected_position['ticker']}")
-                                st.markdown(f"**매수가:** {selected_position['buy_price']:,.0f}원")
-                                st.markdown(f"**현재가:** {selected_position['current_price']:,.0f}원")
-                                st.markdown(f"**보유 수량:** {selected_position['quantity']}주")
-                                st.markdown(f"**매수일:** {selected_position['buy_date']}")
-                                st.markdown(f"**수익률:** {selected_position['profit_rate']:+.2f}%")
+                            # 버튼 라벨 구성 (더 큰 폰트와 명확한 정보)
+                            button_label = f"{profit_emoji} **{pos['company_name']}** ({pos['ticker']})"
 
-                                if selected_position.get('rsi'):
-                                    st.markdown(f"**RSI (매수 당시):** {selected_position['rsi']:.2f}")
-                                if selected_position.get('macd'):
-                                    st.markdown(f"**MACD (매수 당시):** {selected_position['macd']:.2f}")
+                            if st.button(
+                                button_label,
+                                key=f"position_btn_{idx}_{pos.get('id')}",
+                                type=button_type,
+                                use_container_width=True
+                            ):
+                                st.session_state.selected_position_id = pos.get('id')
+                                st.rerun()
+
+                            # 선택된 포지션의 경우 상세 정보 표시
+                            if is_selected:
+                                with st.container():
+                                    st.markdown(f"""
+                                    <div style='padding: 10px; background-color: rgba(128, 128, 128, 0.1); border-radius: 5px; margin-bottom: 10px;'>
+                                        <p style='font-size: 14px; margin: 5px 0;'>💰 <strong>매수가:</strong> {pos['buy_price']:,.0f}원 | <strong>현재가:</strong> {pos['current_price']:,.0f}원</p>
+                                        <p style='font-size: 14px; margin: 5px 0;'>📊 <strong>보유 수량:</strong> {pos['quantity']}주 | <strong>매수일:</strong> {pos['buy_date']}</p>
+                                        <p style='font-size: 16px; margin: 5px 0;'>{profit_color} <strong>수익률:</strong> {profit_rate:+.2f}%</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                        # 선택된 포지션 정보를 변수로 저장
+                        selected_position = None
+                        if st.session_state.selected_position_id is not None:
+                            for pos in positions:
+                                if pos.get('id') == st.session_state.selected_position_id:
+                                    selected_position = pos
+                                    break
 
             # 오른쪽: 매도 폼
             with col_right:
@@ -1661,9 +1854,7 @@ asyncio.run(run())
 
                 if not positions:
                     st.info("매도할 보유 종목이 없습니다.")
-                elif selected_label:
-                    selected_position = position_options[selected_label]
-
+                elif selected_position:
                     # 현재가 조회 (최신 가격)
                     with st.spinner("현재가를 조회하고 있습니다..."):
                         if stock is not None:
@@ -1750,28 +1941,43 @@ asyncio.run(run())
                             elif sell_quantity > selected_position['quantity']:
                                 st.error(f"❌ 매도 수량은 최대 {selected_position['quantity']}주까지 가능합니다.")
                             else:
-                                # 매도 처리
-                                sell_date_str = sell_date.strftime("%Y-%m-%d")
+                                # position_id 검증
+                                position_id = selected_position.get('id')
+                                if position_id is None:
+                                    st.error("❌ 포지션 ID를 찾을 수 없습니다.")
+                                    st.error("💡 **해결 방법**: 데이터베이스 스키마 문제일 수 있습니다.")
+                                    st.code(f"""
+# 다음 파일을 삭제하고 앱을 다시 시작하세요:
+{db_path}
 
-                                with TradingJournalDB(db_path) as db:
-                                    success = db.sell_position(
-                                        position_id=selected_position['id'],
-                                        sell_quantity=sell_quantity,
-                                        sell_price=sell_price,
-                                        sell_date=sell_date_str
-                                    )
+# 또는 터미널에서:
+rm {db_path}
+streamlit run examples/streamlit/app_modern.py
+                                    """)
+                                else:
+                                    # 매도 처리
+                                    sell_date_str = sell_date.strftime("%Y-%m-%d")
 
-                                    if success:
-                                        if sell_quantity == selected_position['quantity']:
-                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 전체 매도가 완료되었습니다!")
+                                    with TradingJournalDB(db_path) as db:
+                                        success = db.sell_position(
+                                            position_id=position_id,
+                                            sell_quantity=sell_quantity,
+                                            sell_price=sell_price,
+                                            sell_date=sell_date_str
+                                        )
+
+                                        if success:
+                                            if sell_quantity == selected_position['quantity']:
+                                                st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 전체 매도가 완료되었습니다!")
+                                            else:
+                                                remaining = selected_position['quantity'] - sell_quantity
+                                                st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 부분 매도가 완료되었습니다! (잔여: {remaining}주)")
+
+                                            st.info(f"💰 실현 손익: {total_profit:+,.0f}원 ({profit_rate:+.2f}%)")
+                                            st.rerun()
                                         else:
-                                            remaining = selected_position['quantity'] - sell_quantity
-                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 부분 매도가 완료되었습니다! (잔여: {remaining}주)")
-
-                                        st.info(f"💰 실현 손익: {total_profit:+,.0f}원 ({profit_rate:+.2f}%)")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ 매도 처리 중 오류가 발생했습니다.")
+                                            st.error("❌ 매도 처리 중 오류가 발생했습니다.")
+                                            st.warning("💡 로그를 확인하거나 데이터베이스를 다시 생성해보세요.")
 
                 else:
                     st.info("왼쪽에서 매도할 종목을 선택해주세요.")
@@ -2107,7 +2313,7 @@ asyncio.run(run())
 
         st.sidebar.title("메뉴")
 
-        # 모던한 사이드바 메뉴
+        # 모던한 사이드바 메뉴 (버튼 스타일)
         menu_options = {
             "분석 요청": "📝",
             "보고서 보기": "📚",
@@ -2116,11 +2322,26 @@ asyncio.run(run())
             "거래 히스토리": "📜"
         }
 
-        menu = st.sidebar.radio(
-            "선택",
-            list(menu_options.keys()),
-            format_func=lambda x: f"{menu_options[x]} {x}"
-        )
+        # session_state에 선택된 메뉴 저장 (초기값)
+        if 'selected_menu' not in st.session_state:
+            st.session_state.selected_menu = "분석 요청"
+
+        # 각 메뉴를 버튼으로 표시
+        for menu_name, icon in menu_options.items():
+            is_selected = st.session_state.selected_menu == menu_name
+            button_type = "primary" if is_selected else "secondary"
+
+            # 버튼 클릭 시 메뉴 변경
+            if st.sidebar.button(
+                f"{icon} {menu_name}",
+                key=f"menu_btn_{menu_name}",
+                type=button_type,
+                use_container_width=True
+            ):
+                st.session_state.selected_menu = menu_name
+                st.rerun()
+
+        menu = st.session_state.selected_menu
 
         # 앱 버전 및 소셜 링크
         st.sidebar.markdown("---")
