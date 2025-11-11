@@ -1920,28 +1920,43 @@ asyncio.run(run())
                             elif sell_quantity > selected_position['quantity']:
                                 st.error(f"❌ 매도 수량은 최대 {selected_position['quantity']}주까지 가능합니다.")
                             else:
-                                # 매도 처리
-                                sell_date_str = sell_date.strftime("%Y-%m-%d")
+                                # position_id 검증
+                                position_id = selected_position.get('id')
+                                if position_id is None:
+                                    st.error("❌ 포지션 ID를 찾을 수 없습니다.")
+                                    st.error("💡 **해결 방법**: 데이터베이스 스키마 문제일 수 있습니다.")
+                                    st.code(f"""
+# 다음 파일을 삭제하고 앱을 다시 시작하세요:
+{db_path}
 
-                                with TradingJournalDB(db_path) as db:
-                                    success = db.sell_position(
-                                        position_id=selected_position['id'],
-                                        sell_quantity=sell_quantity,
-                                        sell_price=sell_price,
-                                        sell_date=sell_date_str
-                                    )
+# 또는 터미널에서:
+rm {db_path}
+streamlit run examples/streamlit/app_modern.py
+                                    """)
+                                else:
+                                    # 매도 처리
+                                    sell_date_str = sell_date.strftime("%Y-%m-%d")
 
-                                    if success:
-                                        if sell_quantity == selected_position['quantity']:
-                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 전체 매도가 완료되었습니다!")
+                                    with TradingJournalDB(db_path) as db:
+                                        success = db.sell_position(
+                                            position_id=position_id,
+                                            sell_quantity=sell_quantity,
+                                            sell_price=sell_price,
+                                            sell_date=sell_date_str
+                                        )
+
+                                        if success:
+                                            if sell_quantity == selected_position['quantity']:
+                                                st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 전체 매도가 완료되었습니다!")
+                                            else:
+                                                remaining = selected_position['quantity'] - sell_quantity
+                                                st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 부분 매도가 완료되었습니다! (잔여: {remaining}주)")
+
+                                            st.info(f"💰 실현 손익: {total_profit:+,.0f}원 ({profit_rate:+.2f}%)")
+                                            st.rerun()
                                         else:
-                                            remaining = selected_position['quantity'] - sell_quantity
-                                            st.success(f"✅ {selected_position['company_name']} {sell_quantity}주 부분 매도가 완료되었습니다! (잔여: {remaining}주)")
-
-                                        st.info(f"💰 실현 손익: {total_profit:+,.0f}원 ({profit_rate:+.2f}%)")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ 매도 처리 중 오류가 발생했습니다.")
+                                            st.error("❌ 매도 처리 중 오류가 발생했습니다.")
+                                            st.warning("💡 로그를 확인하거나 데이터베이스를 다시 생성해보세요.")
 
                 else:
                     st.info("왼쪽에서 매도할 종목을 선택해주세요.")

@@ -51,6 +51,9 @@ class TradingJournalDB:
 
     def _create_tables(self):
         """필요한 테이블들을 자동으로 생성"""
+        # 먼저 마이그레이션 체크 (기존 테이블이 잘못된 스키마를 가진 경우)
+        self._migrate_remove_unique_constraint()
+
         # stock_holdings 테이블 생성 (여러 번 매수 가능하도록 id 추가)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS stock_holdings (
@@ -93,8 +96,8 @@ class TradingJournalDB:
         self.conn.commit()
         logger.info("데이터베이스 테이블 생성 완료")
 
-        # 기존 테이블에 UNIQUE 제약이 있는 경우 마이그레이션
-        self._migrate_remove_unique_constraint()
+        # 마이그레이션 후 다시 한 번 체크 (혹시 모를 문제 대비)
+        self._validate_schema()
 
     def _migrate_remove_unique_constraint(self):
         """
@@ -225,6 +228,46 @@ class TradingJournalDB:
                 self.conn.rollback()
             except:
                 pass
+
+    def _validate_schema(self):
+        """
+        테이블 스키마가 올바른지 검증
+        """
+        try:
+            # stock_holdings 테이블 스키마 확인
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='stock_holdings'")
+            result = self.cursor.fetchone()
+
+            if not result:
+                logger.warning("⚠️  stock_holdings 테이블을 찾을 수 없습니다.")
+                return
+
+            current_schema = result[0]
+
+            # 필수 요구사항 체크
+            has_id_pk = 'id INTEGER PRIMARY KEY AUTOINCREMENT' in current_schema
+            has_unique = 'UNIQUE' in current_schema.upper()
+
+            # UNIQUE 인덱스 체크
+            self.cursor.execute("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='stock_holdings'")
+            indexes = self.cursor.fetchall()
+            for idx in indexes:
+                if idx[0] and 'UNIQUE' in idx[0].upper():
+                    has_unique = True
+
+            if not has_id_pk:
+                logger.error("❌ stock_holdings 테이블에 id PRIMARY KEY가 없습니다!")
+                logger.error("   데이터베이스 파일을 삭제하고 다시 시도하거나 관리자에게 문의하세요.")
+
+            if has_unique:
+                logger.error("❌ stock_holdings 테이블에 UNIQUE 제약이 여전히 존재합니다!")
+                logger.error("   데이터베이스 파일을 삭제하고 다시 시도하거나 관리자에게 문의하세요.")
+
+            if has_id_pk and not has_unique:
+                logger.info("✅ 테이블 스키마 검증 완료: 올바른 스키마입니다.")
+
+        except Exception as e:
+            logger.warning(f"스키마 검증 중 오류 (무시 가능): {str(e)}")
 
     def _get_current_price(self, ticker: str) -> Optional[float]:
         """
@@ -824,6 +867,12 @@ class TradingJournalDB:
             성공 여부
         """
         try:
+            # position_id 유효성 검증
+            if position_id is None:
+                logger.error("❌ 포지션 ID가 None입니다. 데이터베이스 스키마에 id 컬럼이 없을 수 있습니다.")
+                logger.error("   해결 방법: 데이터베이스 파일을 삭제하고 앱을 다시 시작하세요.")
+                return False
+
             # 해당 포지션 조회
             self.cursor.execute("""
                 SELECT id, ticker, company_name, buy_price, buy_date, quantity,
@@ -835,6 +884,7 @@ class TradingJournalDB:
             position = self.cursor.fetchone()
             if not position:
                 logger.error(f"포지션을 찾을 수 없습니다: ID {position_id}")
+                logger.error("   보유 종목 목록을 다시 확인해주세요.")
                 return False
 
             position_dict = dict(position)
