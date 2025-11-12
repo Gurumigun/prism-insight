@@ -1222,7 +1222,6 @@ except Exception as e:
                 kospi_adr_value = st.session_state.get('searched_kospi_adr', 0)
                 kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
 
-                st.success(f"✅ 종목 조회 완료: {stock_name} ({ticker})")
                 st.markdown("---")
 
                 # 세션 상태 초기화
@@ -1234,8 +1233,6 @@ except Exception as e:
                     st.session_state.accumulated_amount = 0
                 if 'direct_input_mode' not in st.session_state:
                     st.session_state.direct_input_mode = False
-
-                # 매수일 선택 (기본값)
                 if 'date_selector' not in st.session_state:
                     st.session_state.date_selector = datetime.now()
 
@@ -1245,9 +1242,6 @@ except Exception as e:
                 else:
                     calculated_quantity = st.session_state.accumulated_quantity
 
-                # chart_base64 정의 (오류 수정)
-                chart_base64 = st.session_state.get('searched_chart_base64', None)
-
                 # 2열 레이아웃: 왼쪽(저장 데이터) / 오른쪽(참고 지표)
                 left_col, right_col = st.columns([1, 1])
 
@@ -1255,20 +1249,70 @@ except Exception as e:
                 with left_col:
                     st.markdown("### 📝 매수 정보 입력")
 
+                    # 매수일 선택
+                    st.markdown("#### 📅 매수일")
+                    selected_date = st.date_input(
+                        "매수일을 선택하세요",
+                        value=st.session_state.date_selector if isinstance(st.session_state.date_selector, datetime) else datetime.now(),
+                        max_value=datetime.now(),
+                        help="매수한 날짜를 선택하세요",
+                        key="date_selector_left",
+                        label_visibility="collapsed"
+                    )
+                    st.session_state.date_selector = selected_date
+
+                    recalc_button = st.button(
+                        "📊 이 날짜로 지표 재계산",
+                        use_container_width=True,
+                        type="secondary",
+                        key="recalc_btn_left"
+                    )
+
+                    # 재계산 버튼이 눌렸을 때
+                    if recalc_button:
+                        with st.spinner(f"📅 {selected_date.strftime('%Y-%m-%d')} 기준 기술적 지표를 계산하고 있습니다..."):
+                            _, price_at_date, chart_df_date, rsi_date, macd_date, adr_date = self.get_stock_info(
+                                ticker,
+                                selected_date
+                            )
+
+                            if price_at_date:
+                                date_str = selected_date.strftime("%Y%m%d")
+                                kospi_adr_date, kosdaq_adr_date = self.calculate_market_adr(date_str)
+
+                                st.session_state.searched_price = price_at_date
+                                st.session_state.searched_chart = chart_df_date
+                                st.session_state.searched_rsi = rsi_date
+                                st.session_state.searched_macd = macd_date
+                                st.session_state.searched_adr = adr_date
+                                st.session_state.searched_kospi_adr = kospi_adr_date
+                                st.session_state.searched_kosdaq_adr = kosdaq_adr_date
+
+                                st.success(f"✅ {selected_date.strftime('%Y-%m-%d')} 기준 지표가 업데이트되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("❌ 해당 날짜의 데이터를 가져올 수 없습니다. 영업일을 선택해주세요.")
+
+                    st.markdown("---")
+
                     # 매수가 입력
+                    st.markdown("#### 💰 매수가")
                     buy_price = st.number_input(
-                        "💰 매수가 (원) *",
+                        "매수가 (원) *",
                         min_value=1,
                         value=st.session_state.buy_price_input,
                         step=100,
                         key="buy_price_field",
-                        help="실제 매수한 가격을 입력해주세요"
+                        help="실제 매수한 가격을 입력해주세요",
+                        label_visibility="collapsed"
                     )
                     st.session_state.buy_price_input = buy_price
 
-                    # 투자 금액 선택
-                    st.markdown("#### 💸 투자 금액 선택")
-                    st.caption("버튼을 클릭할 때마다 수량이 누적됩니다.")
+                    st.markdown("---")
+
+                    # 수량 및 투자금액 입력
+                    st.markdown("#### 📦 수량 및 투자금액")
+                    st.caption("금액 버튼을 클릭하면 수량이 자동 계산됩니다.")
 
                     # 금액 버튼들 (2행으로 배치)
                     col1, col2 = st.columns(2)
@@ -1369,12 +1413,11 @@ except Exception as e:
                         st.markdown("---")
                         submitted = st.form_submit_button("💾 매수 기록 저장", use_container_width=True, type="primary")
 
-                # ========== 오른쪽: 참고 지표 ==========
+                # ========== 오른쪽: 종목 정보 및 참고 지표 ==========
                 with right_col:
-                    st.markdown("### 📊 종목 정보 및 참고 지표")
+                    st.markdown("### 📊 종목 정보")
 
                     # 종목 정보 카드
-                    st.markdown("#### 📌 종목 정보")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric("종목명", stock_name)
@@ -1389,56 +1432,8 @@ except Exception as e:
 
                     st.markdown("---")
 
-                    # 매수일 선택 및 재계산
-                    st.markdown("#### 📅 매수일 선택")
-                    selected_date = st.date_input(
-                        "매수일을 선택하세요",
-                        value=st.session_state.date_selector if isinstance(st.session_state.date_selector, datetime) else datetime.now(),
-                        max_value=datetime.now(),
-                        help="매수한 날짜를 선택하면 해당 날짜의 기술적 지표를 계산할 수 있습니다",
-                        key="date_selector_input"
-                    )
-                    st.session_state.date_selector = selected_date
-
-                    recalc_button = st.button(
-                        "📊 이 날짜로 지표 재계산",
-                        use_container_width=True,
-                        type="secondary",
-                        key="recalc_btn"
-                    )
-
-                    # 재계산 버튼이 눌렸을 때
-                    if recalc_button:
-                        with st.spinner(f"📅 {selected_date.strftime('%Y-%m-%d')} 기준 기술적 지표를 계산하고 있습니다..."):
-                            # 해당 날짜 기준으로 기술적 지표 재계산
-                            _, price_at_date, chart_df_date, rsi_date, macd_date, adr_date = self.get_stock_info(
-                                ticker,
-                                selected_date
-                            )
-
-                            if price_at_date:
-                                # 시장 ADR도 해당 날짜 기준으로 재계산
-                                date_str = selected_date.strftime("%Y%m%d")
-                                kospi_adr_date, kosdaq_adr_date = self.calculate_market_adr(date_str)
-
-                                # 세션 상태 업데이트
-                                st.session_state.searched_price = price_at_date
-                                st.session_state.searched_chart = chart_df_date
-                                st.session_state.searched_rsi = rsi_date
-                                st.session_state.searched_macd = macd_date
-                                st.session_state.searched_adr = adr_date
-                                st.session_state.searched_kospi_adr = kospi_adr_date
-                                st.session_state.searched_kosdaq_adr = kosdaq_adr_date
-
-                                st.success(f"✅ {selected_date.strftime('%Y-%m-%d')} 기준 지표가 업데이트되었습니다!")
-                                st.rerun()
-                            else:
-                                st.error("❌ 해당 날짜의 데이터를 가져올 수 없습니다. 영업일을 선택해주세요.")
-
-                    st.markdown("---")
-
                     # 기술적 지표 표시
-                    st.markdown("#### 📈 기술적 지표")
+                    st.markdown("### 📈 기술적 지표")
                     st.caption(f"기준일: {selected_date.strftime('%Y년 %m월 %d일')}")
                     col1, col2 = st.columns(2)
                     with col1:
@@ -1450,12 +1445,14 @@ except Exception as e:
 
                     st.markdown("---")
 
-                    # 차트 표시
+                    # 주가 차트
+                    st.markdown("### 📈 주가 차트")
                     if chart_df is not None and not chart_df.empty:
-                        st.markdown("#### 📈 주가 차트")
                         fig = self.create_stock_chart(chart_df, stock_name)
                         if fig:
                             st.plotly_chart(fig, use_container_width=True, key="chart_right")
+                    else:
+                        st.info("차트 데이터가 없습니다.")
 
                 # Form 제출 로직 처리
                 if submitted:
