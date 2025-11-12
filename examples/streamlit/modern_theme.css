@@ -1,0 +1,1349 @@
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎨 PRISM-INSIGHT Modern Theme CSS
+   다크/라이트 테마 자동 전환 지원
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎨 CSS 변수 기반 테마 시스템 - 라이트 모드
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+:root, [data-theme="light"] {
+    /* Primary Colors */
+    --primary: #0EA5E9;
+    --primary-hover: #0284C7;
+    --primary-light: #BAE6FD;
+    --primary-dark: #075985;
+
+    /* Background Colors */
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F8FAFC;
+    --bg-tertiary: #F1F5F9;
+    --bg-elevated: #FFFFFF;
+
+    /* Text Colors */
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-tertiary: #64748B;
+    --text-inverted: #FFFFFF;
+
+    /* Border Colors */
+    --border-light: #E2E8F0;
+    --border-medium: #CBD5E1;
+    --border-dark: #94A3B8;
+
+    /* Semantic Colors */
+    --success-bg: #ECFDF5;
+    --success-border: #D1FAE5;
+    --success-text: #065F46;
+    --error-bg: #FEF2F2;
+    --error-border: #FEE2E2;
+    --error-text: #991B1B;
+    --warning-bg: #FFFBEB;
+    --warning-border: #FEF3C7;
+    --warning-text: #92400E;
+    --info-bg: #EFF6FF;
+    --info-border: #DBEAFE;
+    --info-text: #1E40AF;
+
+    /* Shadow & Effects */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.12);
+    --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.15);
+    --shadow-glow: 0 0 20px rgba(14, 165, 233, 0.3);
+
+    /* Glass Effect */
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-border: rgba(255, 255, 255, 0.2);
+
+    /* Gradient */
+    --gradient-primary: linear-gradient(135deg, #0EA5E9 0%, #3B82F6 100%);
+    --gradient-success: linear-gradient(135deg, #10B981 0%, #059669 100%);
+    --gradient-warning: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+    --gradient-bg: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🌙 다크 모드
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+[data-theme="dark"] {
+    /* Primary Colors */
+    --primary: #38BDF8;
+    --primary-hover: #7DD3FC;
+    --primary-light: #0C4A6E;
+    --primary-dark: #BAE6FD;
+
+    /* Background Colors */
+    --bg-primary: #0F172A;
+    --bg-secondary: #1E293B;
+    --bg-tertiary: #334155;
+    --bg-elevated: #1E293B;
+
+    /* Text Colors */
+    --text-primary: #F8FAFC;
+    --text-secondary: #CBD5E1;
+    --text-tertiary: #94A3B8;
+    --text-inverted: #0F172A;
+
+    /* Border Colors */
+    --border-light: #334155;
+    --border-medium: #475569;
+    --border-dark: #64748B;
+
+    /* Semantic Colors */
+    --success-bg: #064E3B;
+    --success-border: #065F46;
+    --success-text: #6EE7B7;
+    --error-bg: #7F1D1D;
+    --error-border: #991B1B;
+    --error-text: #FCA5A5;
+    --warning-bg: #78350F;
+    --warning-border: #92400E;
+    --warning-text: #FCD34D;
+    --info-bg: #1E3A8A;
+    --info-border: #1E40AF;
+    --info-text: #93C5FD;
+
+    /* Shadow & Effects */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.6);
+    --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.7);
+    --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.4);
+
+    /* Glass Effect */
+    --glass-bg: rgba(30, 41, 59, 0.85);
+    --glass-border: rgba(148, 163, 184, 0.1);
+
+    /* Gradient */
+    --gradient-primary: linear-gradient(135deg, #0EA5E9 0%, #6366F1 100%);
+    --gradient-success: linear-gradient(135deg, #10B981 0%, #14B8A6 100%);
+    --gradient-warning: linear-gradient(135deg, #F59E0B 0%, #EF4444 100%);
+    --gradient-bg: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
+}
+
+/* 시스템 라이트 모드 자동 감지 (명시적) */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+        /* Primary Colors */
+        --primary: #0EA5E9 !important;
+        --primary-hover: #0284C7 !important;
+        --primary-light: #BAE6FD !important;
+        --primary-dark: #075985 !important;
+
+        /* Background Colors */
+        --bg-primary: #FFFFFF !important;
+        --bg-secondary: #F8FAFC !important;
+        --bg-tertiary: #F1F5F9 !important;
+        --bg-elevated: #FFFFFF !important;
+
+        /* Text Colors */
+        --text-primary: #0F172A !important;
+        --text-secondary: #475569 !important;
+        --text-tertiary: #64748B !important;
+        --text-inverted: #FFFFFF !important;
+
+        /* Border Colors */
+        --border-light: #E2E8F0 !important;
+        --border-medium: #CBD5E1 !important;
+        --border-dark: #94A3B8 !important;
+
+        /* Semantic Colors */
+        --success-bg: #ECFDF5 !important;
+        --success-border: #D1FAE5 !important;
+        --success-text: #065F46 !important;
+        --error-bg: #FEF2F2 !important;
+        --error-border: #FEE2E2 !important;
+        --error-text: #991B1B !important;
+        --warning-bg: #FFFBEB !important;
+        --warning-border: #FEF3C7 !important;
+        --warning-text: #92400E !important;
+        --info-bg: #EFF6FF !important;
+        --info-border: #DBEAFE !important;
+        --info-text: #1E40AF !important;
+
+        /* Shadow & Effects */
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+        --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.12) !important;
+        --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.15) !important;
+        --shadow-glow: 0 0 20px rgba(14, 165, 233, 0.3) !important;
+
+        /* Glass Effect */
+        --glass-bg: rgba(255, 255, 255, 0.85) !important;
+        --glass-border: rgba(255, 255, 255, 0.2) !important;
+
+        /* Gradient */
+        --gradient-primary: linear-gradient(135deg, #0EA5E9 0%, #3B82F6 100%) !important;
+        --gradient-success: linear-gradient(135deg, #10B981 0%, #059669 100%) !important;
+        --gradient-warning: linear-gradient(135deg, #F59E0B 0%, #D97706 100%) !important;
+        --gradient-bg: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%) !important;
+    }
+}
+
+/* 시스템 다크 모드 자동 감지 */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --primary: #38BDF8 !important;
+        --primary-hover: #7DD3FC !important;
+        --primary-light: #0C4A6E !important;
+        --primary-dark: #BAE6FD !important;
+        --bg-primary: #0F172A !important;
+        --bg-secondary: #1E293B !important;
+        --bg-tertiary: #334155 !important;
+        --bg-elevated: #1E293B !important;
+        --text-primary: #F8FAFC !important;
+        --text-secondary: #CBD5E1 !important;
+        --text-tertiary: #94A3B8 !important;
+        --text-inverted: #0F172A !important;
+        --border-light: #334155 !important;
+        --border-medium: #475569 !important;
+        --border-dark: #64748B !important;
+        --success-bg: #064E3B !important;
+        --success-border: #065F46 !important;
+        --success-text: #6EE7B7 !important;
+        --error-bg: #7F1D1D !important;
+        --error-border: #991B1B !important;
+        --error-text: #FCA5A5 !important;
+        --warning-bg: #78350F !important;
+        --warning-border: #92400E !important;
+        --warning-text: #FCD34D !important;
+        --info-bg: #1E3A8A !important;
+        --info-border: #1E40AF !important;
+        --info-text: #93C5FD !important;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+        --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.6) !important;
+        --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.7) !important;
+        --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.4) !important;
+        --glass-bg: rgba(30, 41, 59, 0.85) !important;
+        --glass-border: rgba(148, 163, 184, 0.1) !important;
+        --gradient-primary: linear-gradient(135deg, #0EA5E9 0%, #6366F1 100%) !important;
+        --gradient-success: linear-gradient(135deg, #10B981 0%, #14B8A6 100%) !important;
+        --gradient-warning: linear-gradient(135deg, #F59E0B 0%, #EF4444 100%) !important;
+        --gradient-bg: linear-gradient(180deg, #0F172A 0%, #1E293B 100%) !important;
+    }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📱 전체 페이지 스타일
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.main {
+    background: var(--gradient-bg);
+    padding: 1.5rem;
+    transition: background 0.3s ease;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ✨ 타이포그래피
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    color: var(--text-primary);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    transition: color 0.3s ease;
+}
+
+h1 {
+    font-size: 2.5rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 3px solid transparent;
+    border-image: var(--gradient-primary) 1;
+    color: var(--text-primary);
+}
+
+h2 {
+    font-size: 1.875rem;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    position: relative;
+    padding-left: 1rem;
+}
+
+h2::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 70%;
+    background: var(--gradient-primary);
+    border-radius: 2px;
+}
+
+h3 {
+    font-size: 1.5rem;
+    margin-top: 1.5rem;
+    color: var(--text-secondary);
+}
+
+p, span, div {
+    color: var(--text-primary);
+    transition: color 0.3s ease;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎴 카드 컴포넌트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    box-shadow: var(--shadow-md);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--gradient-primary);
+    transform: scaleX(0);
+    transition: transform 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--primary);
+}
+
+.card:hover::before {
+    transform: scaleX(1);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🔘 버튼 스타일
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.stButton > button {
+    background: var(--gradient-primary) !important;
+    color: var(--text-inverted) !important;
+    border-radius: 10px !important;
+    height: 3rem !important;
+    font-weight: 600 !important;
+    border: none !important;
+    box-shadow: var(--shadow-sm) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.stButton > button::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: var(--shadow-glow) !important;
+}
+
+.stButton > button:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+.stButton > button:active {
+    transform: translateY(0) scale(0.98) !important;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📝 입력 폼 요소
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background-color: var(--bg-elevated) !important;
+    border: 2px solid var(--border-light) !important;
+    border-radius: 10px !important;
+    color: var(--text-primary) !important;
+    padding: 0.75rem 1rem !important;
+    transition: all 0.3s ease !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1) !important;
+    outline: none !important;
+}
+
+.stDateInput > div > div > input {
+    background-color: var(--bg-elevated) !important;
+    border: 2px solid var(--border-light) !important;
+    border-radius: 10px !important;
+    color: var(--text-primary) !important;
+    transition: all 0.3s ease !important;
+}
+
+.stSelectbox > div > div {
+    background-color: var(--bg-elevated) !important;
+    border: 2px solid var(--border-light) !important;
+    border-radius: 10px !important;
+    transition: all 0.3s ease !important;
+}
+
+.stSelectbox > div > div:focus-within {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1) !important;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎯 탭 스타일
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background-color: var(--bg-secondary);
+    border-radius: 12px;
+    padding: 0.5rem;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background-color: transparent;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    transition: all 0.3s ease;
+}
+
+.stTabs [aria-selected="true"] {
+    background: var(--gradient-primary);
+    color: white;
+    box-shadow: var(--shadow-sm);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📊 메트릭 & 통계 카드
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.stMetric {
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 1rem;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.3s ease;
+}
+
+.stMetric:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.stMetric label {
+    color: var(--text-secondary) !important;
+    font-size: 0.875rem !important;
+    font-weight: 600 !important;
+}
+
+.stMetric [data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+    font-size: 1.875rem !important;
+    font-weight: 700 !important;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ⚠️ 알림 메시지
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.stAlert {
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    border-width: 1px;
+    border-style: solid;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.stSuccess {
+    background-color: var(--success-bg) !important;
+    color: var(--success-text) !important;
+    border-color: var(--success-border) !important;
+}
+
+.stError {
+    background-color: var(--error-bg) !important;
+    color: var(--error-text) !important;
+    border-color: var(--error-border) !important;
+}
+
+.stWarning {
+    background-color: var(--warning-bg) !important;
+    color: var(--warning-text) !important;
+    border-color: var(--warning-border) !important;
+}
+
+.stInfo {
+    background-color: var(--info-bg) !important;
+    color: var(--info-text) !important;
+    border-color: var(--info-border) !important;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📋 테이블 스타일
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.dataframe {
+    font-family: 'Pretendard', -apple-system, system-ui, sans-serif;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.dataframe th {
+    background: var(--gradient-primary);
+    color: white;
+    padding: 0.875rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.dataframe td {
+    background-color: var(--bg-elevated);
+    color: var(--text-primary);
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--border-light);
+    transition: background-color 0.2s ease;
+}
+
+.dataframe tr:hover td {
+    background-color: var(--bg-secondary);
+}
+
+.dataframe tr:last-child td {
+    border-bottom: none;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🔗 링크 스타일
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+a::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: var(--gradient-primary);
+    transition: width 0.3s ease;
+}
+
+a:hover {
+    color: var(--primary-hover);
+}
+
+a:hover::after {
+    width: 100%;
+}
+
+a[download] {
+    display: inline-block;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    margin-right: 0.5rem;
+    border: 1px solid var(--border-light);
+    transition: all 0.3s ease;
+}
+
+a[download]:hover {
+    background: var(--primary);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+a[download]::after {
+    display: none;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📊 프로그레스 바
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.stProgress > div > div {
+    background: var(--gradient-primary);
+    border-radius: 10px;
+    box-shadow: var(--shadow-glow);
+}
+
+.stProgress > div {
+    background-color: var(--bg-tertiary);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🖼️ 이미지 & 미디어
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+img {
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+img:hover {
+    transform: scale(1.02);
+    box-shadow: var(--shadow-lg);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎨 사이드바
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+[data-testid="stSidebar"] {
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-light);
+}
+
+[data-testid="stSidebar"] .block-container {
+    padding: 2rem 1rem;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎪 커스텀 컴포넌트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* 헤더 */
+.header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+    text-align: center;
+    position: relative;
+}
+
+.header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100px;
+    height: 3px;
+    background: var(--gradient-primary);
+    border-radius: 2px;
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 0.75rem;
+}
+
+.logo {
+    font-size: 3rem;
+    margin-right: 1rem;
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+}
+
+.app-title {
+    font-family: 'Pretendard', -apple-system, system-ui, sans-serif;
+    font-size: 2.75rem;
+    font-weight: 800;
+    color: var(--primary);
+    letter-spacing: -0.03em;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 2px 8px rgba(14, 165, 233, 0.2);
+}
+
+.app-description {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+/* 사이드바 헤더 */
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+}
+
+.sidebar-logo {
+    font-size: 2rem;
+    margin-right: 0.75rem;
+}
+
+.sidebar-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* 상태 카드 */
+@keyframes progress-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.status-card {
+    display: flex;
+    align-items: flex-start;
+    padding: 1.25rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    transition: all 0.3s ease;
+}
+
+.status-card:hover {
+    transform: translateX(4px);
+    box-shadow: var(--shadow-md);
+}
+
+.status-icon {
+    font-size: 1.75rem;
+    margin-right: 1rem;
+    margin-top: 0.25rem;
+}
+
+.status-details {
+    flex: 1;
+}
+
+.status-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.status-info {
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+    font-size: 0.875rem;
+}
+
+.status-card.pending {
+    background-color: var(--warning-bg);
+    border-color: var(--warning-border);
+}
+
+.status-card.completed {
+    background-color: var(--success-bg);
+    border-color: var(--success-border);
+}
+
+.status-card.failed {
+    background-color: var(--error-bg);
+    border-color: var(--error-border);
+}
+
+.status-progress-container {
+    height: 8px;
+    background-color: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 0.75rem;
+}
+
+.status-progress-bar {
+    height: 100%;
+    background: var(--gradient-primary);
+    border-radius: 4px;
+    animation: progress-pulse 2s infinite;
+}
+
+/* 기능 리스트 */
+.feature-list {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+
+.feature-list li {
+    display: flex;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.feature-list li:hover {
+    background: var(--bg-tertiary);
+    transform: translateX(4px);
+}
+
+.feature-icon {
+    font-size: 1.5rem;
+    margin-right: 1rem;
+    width: 32px;
+    text-align: center;
+}
+
+.feature-title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* 상태 배지 */
+.status-badge {
+    display: inline-block;
+    padding: 0.375rem 0.875rem;
+    border-radius: 20px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid;
+}
+
+.status-badge.pending {
+    background-color: var(--warning-bg);
+    color: var(--warning-text);
+    border-color: var(--warning-border);
+}
+
+.status-badge.processing {
+    background-color: var(--info-bg);
+    color: var(--info-text);
+    border-color: var(--info-border);
+    animation: progress-pulse 2s infinite;
+}
+
+.status-badge.completed {
+    background-color: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
+}
+
+.status-badge.failed {
+    background-color: var(--error-bg);
+    color: var(--error-text);
+    border-color: var(--error-border);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎞️ 애니메이션
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+    0% { background-position: -1000px 0; }
+    100% { background-position: 1000px 0; }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.5s ease-out;
+}
+
+.animate-slide-in {
+    animation: slideInRight 0.5s ease-out;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📜 스크롤바
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-medium);
+    border-radius: 10px;
+    transition: background 0.3s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   📱 반응형 디자인
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+@media (max-width: 768px) {
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.5rem; }
+    h3 { font-size: 1.25rem; }
+
+    .card { padding: 1rem; }
+    .app-title { font-size: 2rem; }
+    .logo { font-size: 2rem; }
+
+    .stButton > button {
+        height: 2.5rem !important;
+        font-size: 0.875rem !important;
+    }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎯 유틸리티 클래스
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.scroll-container {
+    max-height: 500px;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.warning-box {
+    background-color: var(--warning-bg);
+    border-left: 4px solid var(--warning-border);
+    padding: 1.25rem;
+    border-radius: 8px;
+    margin-top: 1rem;
+}
+
+.warning-box strong {
+    color: var(--warning-text);
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 1.05rem;
+}
+
+.warning-box p {
+    color: var(--text-secondary);
+    margin: 0;
+    font-size: 0.9375rem;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   🎁 추가 개선사항
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* 선택 영역 하이라이트 */
+::selection {
+    background-color: var(--primary);
+    color: white;
+}
+
+::-moz-selection {
+    background-color: var(--primary);
+    color: white;
+}
+
+/* 포커스 아웃라인 개선 */
+*:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* 코드 블록 */
+code {
+    background-color: var(--bg-tertiary);
+    color: var(--primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.875rem;
+}
+
+pre {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+}
+
+pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ✨ 전체 화면 Streamlit 색상 완전 적용
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* 전체 페이지 배경 */
+html, body, .stApp {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+}
+
+/* 메인 컨텐츠 영역 */
+.main {
+    background: var(--gradient-bg) !important;
+}
+
+.main .block-container {
+    background-color: transparent !important;
+    padding: 2rem 1rem !important;
+}
+
+[data-testid="stAppViewContainer"] {
+    background: var(--gradient-bg) !important;
+}
+
+[data-testid="stHeader"] {
+    background-color: transparent !important;
+}
+
+/* 마크다운 텍스트 전체 */
+.stMarkdown, .stMarkdown * {
+    color: var(--text-primary) !important;
+}
+
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
+.stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+    color: var(--text-primary) !important;
+    font-weight: 700 !important;
+}
+
+.stMarkdown strong, .stMarkdown b {
+    color: var(--text-primary) !important;
+    font-weight: 700 !important;
+}
+
+.stMarkdown p, .stMarkdown span, .stMarkdown div {
+    color: var(--text-primary) !important;
+}
+
+.stMarkdown ul, .stMarkdown ol, .stMarkdown li {
+    color: var(--text-primary) !important;
+}
+
+.stMarkdown a {
+    color: var(--primary) !important;
+}
+
+/* 모든 텍스트 요소 */
+p, span, div, label, input, textarea, select {
+    color: var(--text-primary) !important;
+}
+
+/* 라벨 */
+label, .stLabel {
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+}
+
+.stTextInput label, .stNumberInput label,
+.stDateInput label, .stSelectbox label,
+.stTextArea label, .stSlider label {
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+}
+
+/* 익스팬더 */
+.stExpander, [data-testid="stExpander"] {
+    border: 1px solid var(--border-light) !important;
+    border-radius: 12px !important;
+    background-color: var(--bg-elevated) !important;
+    margin-bottom: 0.5rem !important;
+}
+
+[data-testid="stExpanderDetails"] {
+    background-color: var(--bg-secondary) !important;
+    border-top: 1px solid var(--border-light) !important;
+    padding: 1rem !important;
+}
+
+.streamlit-expanderHeader {
+    background-color: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+    padding: 0.75rem 1rem !important;
+}
+
+.streamlit-expanderHeader:hover {
+    background-color: var(--bg-secondary) !important;
+}
+
+.streamlit-expanderHeader p,
+.streamlit-expanderHeader span,
+.streamlit-expanderHeader div {
+    color: var(--text-primary) !important;
+}
+
+/* 컬럼 */
+[data-testid="column"] {
+    background-color: transparent !important;
+}
+
+[data-testid="column"] * {
+    color: var(--text-primary) !important;
+}
+
+/* 통계 카드 & 메트릭 */
+[data-testid="metric-container"] {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(10px) !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: 12px !important;
+    padding: 1rem !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+
+.stMetric label {
+    color: var(--text-secondary) !important;
+}
+
+.stMetric [data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+}
+
+.stMetric [data-testid="stMetricDelta"] {
+    color: var(--text-secondary) !important;
+}
+
+/* 데이터프레임 & 테이블 */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border-light) !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    background-color: var(--bg-elevated) !important;
+}
+
+[data-testid="stDataFrame"] * {
+    color: var(--text-primary) !important;
+}
+
+/* 버튼 (명시적) */
+.stButton button {
+    background: var(--gradient-primary) !important;
+    color: var(--text-inverted) !important;
+    border: none !important;
+    font-weight: 600 !important;
+}
+
+.stButton button:hover {
+    opacity: 0.9 !important;
+}
+
+/* 수익/손실 텍스트 */
+.profit-text {
+    color: #DC2626 !important;
+    font-weight: 700 !important;
+}
+
+.loss-text {
+    color: #2563EB !important;
+    font-weight: 700 !important;
+}
+
+/* 캘린더 */
+.calendar-day {
+    background-color: var(--bg-elevated) !important;
+    border: 1px solid var(--border-light) !important;
+    color: var(--text-primary) !important;
+}
+
+.calendar-day:hover {
+    background-color: var(--bg-secondary) !important;
+    border-color: var(--primary) !important;
+}
+
+/* 캘린더 수익/손실 색상 (인라인 스타일보다 우선) */
+.calendar-profit-positive {
+    color: #DC2626 !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+}
+
+.calendar-profit-negative {
+    color: #2563EB !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+}
+
+.calendar-profit {
+    color: #DC2626 !important;
+    font-weight: 700 !important;
+}
+
+.calendar-loss {
+    color: #2563EB !important;
+    font-weight: 700 !important;
+}
+
+/* 구분선 */
+hr {
+    border: none !important;
+    border-top: 2px solid var(--border-light) !important;
+    margin: 2rem 0 !important;
+}
+
+/* 인풋 필드들 */
+input, textarea, select {
+    background-color: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+    border: 2px solid var(--border-light) !important;
+}
+
+input::placeholder, textarea::placeholder {
+    color: var(--text-tertiary) !important;
+}
+
+/* 사이드바 */
+[data-testid="stSidebar"] {
+    background-color: var(--bg-secondary) !important;
+    border-right: 1px solid var(--border-light) !important;
+}
+
+[data-testid="stSidebar"] * {
+    color: var(--text-primary) !important;
+}
+
+[data-testid="stSidebar"] .stMarkdown {
+    color: var(--text-primary) !important;
+}
+
+/* 탭 */
+.stTabs [data-baseweb="tab-list"] {
+    background-color: var(--bg-secondary) !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    color: var(--text-secondary) !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background: var(--gradient-primary) !important;
+    color: white !important;
+}
+
+/* 선택된 텍스트 */
+::selection {
+    background-color: var(--primary) !important;
+    color: white !important;
+}
+
+::-moz-selection {
+    background-color: var(--primary) !important;
+    color: white !important;
+}
+
+/* 다크 모드 특화 */
+@media (prefers-color-scheme: dark) {
+    .profit-text, .calendar-profit, .calendar-profit-positive {
+        color: #FCA5A5 !important;
+    }
+
+    .loss-text, .calendar-loss, .calendar-profit-negative {
+        color: #93C5FD !important;
+    }
+}
+
+/* 라이트 모드 특화 */
+@media (prefers-color-scheme: light) {
+    html, body, .stApp {
+        background-color: #FFFFFF !important;
+    }
+
+    .main {
+        background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%) !important;
+    }
+
+    .profit-text, .calendar-profit, .calendar-profit-positive {
+        color: #DC2626 !important;
+    }
+
+    .loss-text, .calendar-loss, .calendar-profit-negative {
+        color: #2563EB !important;
+    }
+
+    /* 모든 텍스트를 강제로 검정색으로 */
+    p, span, div:not(.stButton):not([data-baseweb="tab"]) {
+        color: #0F172A !important;
+    }
+
+    /* 익스팬더 텍스트 */
+    .streamlit-expanderHeader * {
+        color: #0F172A !important;
+    }
+
+    /* 라벨 텍스트 */
+    label {
+        color: #0F172A !important;
+    }
+
+    /* 마크다운 모든 요소 */
+    .stMarkdown, .stMarkdown * {
+        color: #0F172A !important;
+    }
+
+    /* 사이드바 */
+    [data-testid="stSidebar"] {
+        background-color: #F8FAFC !important;
+    }
+
+    [data-testid="stSidebar"] * {
+        color: #0F172A !important;
+    }
+}

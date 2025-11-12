@@ -2968,6 +2968,186 @@ streamlit run examples/streamlit/app_modern.py
             import traceback
             st.code(traceback.format_exc())
 
+    def render_settings(self):
+        """설정 화면"""
+        global TradingJournalDB
+
+        self.add_app_header()
+
+        st.markdown("## ⚙️ 설정")
+        st.markdown("애플리케이션 설정 및 데이터 관리")
+
+        # 탭 생성
+        tab1, tab2 = st.tabs(["🗄️ 데이터베이스 관리", "ℹ️ 시스템 정보"])
+
+        # 탭 1: 데이터베이스 관리
+        with tab1:
+            st.markdown("### 🗄️ 데이터베이스 관리")
+            st.markdown("---")
+
+            if TradingJournalDB is None:
+                st.error("TradingJournalDB 모듈을 불러올 수 없습니다.")
+                return
+
+            # 데이터베이스 경로
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            db_path = os.path.join(project_root, "stock_tracking_db.sqlite")
+
+            # 데이터베이스 통계 표시
+            try:
+                with TradingJournalDB(db_path) as db:
+                    stats = db.get_database_stats()
+
+                    st.markdown("#### 📊 데이터베이스 현황")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("보유 종목", f"{stats.get('open_positions', 0)}개")
+
+                    with col2:
+                        st.metric("매도 종목", f"{stats.get('sold_positions', 0)}개")
+
+                    with col3:
+                        st.metric("거래 기록", f"{stats.get('history_records', 0)}건")
+
+                    with col4:
+                        st.metric("DB 크기", f"{stats.get('file_size_mb', 0)} MB")
+
+                    st.markdown("---")
+
+                    # DB 파일 정보
+                    st.markdown("#### 📁 파일 정보")
+                    st.code(stats.get('db_path', 'N/A'))
+
+            except Exception as e:
+                st.error(f"데이터베이스 통계를 불러올 수 없습니다: {str(e)}")
+
+            st.markdown("---")
+
+            # 백업 섹션
+            st.markdown("#### 💾 데이터베이스 백업")
+            st.info("⚠️ 초기화 전에 데이터베이스를 백업하는 것을 권장합니다.")
+
+            backup_col1, backup_col2 = st.columns([3, 1])
+
+            with backup_col1:
+                st.markdown("현재 데이터베이스를 백업 파일로 저장합니다.")
+
+            with backup_col2:
+                if st.button("💾 백업 생성", use_container_width=True, type="secondary"):
+                    try:
+                        with TradingJournalDB(db_path) as db:
+                            success = db.backup_database()
+                            if success:
+                                st.success("✅ 백업이 성공적으로 생성되었습니다!")
+                            else:
+                                st.error("❌ 백업 생성에 실패했습니다.")
+                    except Exception as e:
+                        st.error(f"백업 중 오류 발생: {str(e)}")
+
+            st.markdown("---")
+
+            # 초기화 섹션
+            st.markdown("#### 🗑️ 데이터베이스 초기화")
+            st.warning("⚠️ **위험**: 모든 매매 기록이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다!")
+
+            # 확인 체크박스
+            if 'reset_confirmed' not in st.session_state:
+                st.session_state.reset_confirmed = False
+
+            confirm_check = st.checkbox(
+                "모든 데이터가 삭제된다는 것을 이해했으며, 계속 진행하겠습니다.",
+                key="reset_confirm_checkbox"
+            )
+
+            # 확인 입력
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                if confirm_check:
+                    confirm_text = st.text_input(
+                        "계속하려면 '초기화' 를 입력하세요:",
+                        key="reset_confirm_text"
+                    )
+                    st.session_state.reset_confirmed = (confirm_text == "초기화")
+                else:
+                    st.session_state.reset_confirmed = False
+
+            with col2:
+                if st.button(
+                    "🗑️ 초기화 실행",
+                    use_container_width=True,
+                    type="primary",
+                    disabled=not st.session_state.reset_confirmed
+                ):
+                    if st.session_state.reset_confirmed:
+                        with st.spinner("데이터베이스를 초기화하고 있습니다..."):
+                            try:
+                                with TradingJournalDB(db_path) as db:
+                                    success = db.reset_database()
+
+                                if success:
+                                    st.success("✅ 데이터베이스가 성공적으로 초기화되었습니다!")
+                                    st.balloons()
+
+                                    # 상태 초기화
+                                    st.session_state.reset_confirmed = False
+                                    if 'reset_confirm_checkbox' in st.session_state:
+                                        del st.session_state['reset_confirm_checkbox']
+                                    if 'reset_confirm_text' in st.session_state:
+                                        del st.session_state['reset_confirm_text']
+
+                                    # 페이지 새로고침
+                                    st.rerun()
+                                else:
+                                    st.error("❌ 데이터베이스 초기화에 실패했습니다.")
+
+                            except Exception as e:
+                                st.error(f"초기화 중 오류 발생: {str(e)}")
+                    else:
+                        st.warning("확인 절차를 완료해주세요.")
+
+        # 탭 2: 시스템 정보
+        with tab2:
+            st.markdown("### ℹ️ 시스템 정보")
+            st.markdown("---")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("#### 📦 애플리케이션")
+                st.markdown(f"- **버전**: v1.0.3")
+                st.markdown(f"- **이름**: 프리즘 애널리틱스")
+                st.markdown(f"- **설명**: AI 주식 분석 에이전트")
+
+                st.markdown("#### 🔧 환경")
+                st.markdown(f"- **Python**: {sys.version.split()[0]}")
+                st.markdown(f"- **Streamlit**: {st.__version__}")
+
+            with col2:
+                st.markdown("#### 📁 경로")
+                st.markdown(f"- **프로젝트 루트**: `{project_root}`")
+                st.markdown(f"- **데이터베이스**: `{db_path}`")
+                st.markdown(f"- **보고서**: `{REPORTS_DIR}`")
+
+                st.markdown("#### 🔗 링크")
+                st.markdown("- [공식 사이트](https://analysis.stocksimulation.kr)")
+                st.markdown("- [GitHub](https://github.com/Gurumigun/prism-insight)")
+
+            st.markdown("---")
+
+            # 디버그 정보
+            with st.expander("🔍 디버그 정보"):
+                st.json({
+                    "session_state_keys": list(st.session_state.keys()),
+                    "db_stats": stats if 'stats' in locals() else "N/A",
+                    "modules": {
+                        "TradingJournalDB": TradingJournalDB is not None,
+                        "pykrx": stock is not None
+                    }
+                })
+
     def main(self):
         """메인 애플리케이션 실행"""
         # 사이드바 디자인 개선
@@ -2987,7 +3167,8 @@ streamlit run examples/streamlit/app_modern.py
             "매수 기록": "💰",
             "매도 기록": "📉",
             "거래 히스토리": "📜",
-            "통계": "📊"
+            "통계": "📊",
+            "설정": "⚙️"
         }
 
         # session_state에 선택된 메뉴 저장 (초기값)
@@ -3030,6 +3211,8 @@ streamlit run examples/streamlit/app_modern.py
             self.render_transaction_history()
         elif menu == "통계":
             self.render_statistics()
+        elif menu == "설정":
+            self.render_settings()
 
 if __name__ == "__main__":
     app = ModernStockAnalysisApp()
