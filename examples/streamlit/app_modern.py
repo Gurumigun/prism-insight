@@ -1384,7 +1384,6 @@ except Exception as e:
                     if st.button("🔄 초기화", type="secondary", use_container_width=True):
                         st.session_state.accumulated_quantity = 0
                         st.session_state.accumulated_amount = 0
-                        st.rerun()
 
                 # 직접 입력
                 st.markdown("##### ✏️ 직접 입력")
@@ -1405,40 +1404,56 @@ except Exception as e:
                             qty = int(custom_amount / buy_price)
                             st.session_state.accumulated_quantity += qty
                             st.session_state.accumulated_amount += qty * buy_price
-                            st.rerun()
                         else:
                             st.warning("매수가와 금액을 입력하세요")
 
                 # 누적 수량 및 금액 표시
                 st.markdown("---")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns([2, 2, 1])
                 with col1:
                     st.metric("누적 수량", f"{st.session_state.accumulated_quantity}주",
                              help="버튼 클릭으로 누적된 총 수량")
                 with col2:
                     st.metric("누적 투자금액", f"{st.session_state.accumulated_amount:,}원",
                              help="누적 수량 × 매수가")
+                with col3:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("📝 직접입력", use_container_width=True, help="누적 수량 무시하고 직접 입력"):
+                        # 직접 입력 모드 활성화
+                        st.session_state.direct_input_mode = True
+                        st.session_state.accumulated_quantity = 0
+                        st.session_state.accumulated_amount = 0
+
+                # 직접 입력 모드 상태 관리
+                if 'direct_input_mode' not in st.session_state:
+                    st.session_state.direct_input_mode = False
 
                 # calculated_quantity 설정 (최종 수량 필드에 사용)
-                calculated_quantity = st.session_state.accumulated_quantity if st.session_state.accumulated_quantity > 0 else 1
+                if st.session_state.direct_input_mode:
+                    calculated_quantity = 0
+                    st.info("💡 직접 입력 모드: 아래에서 원하는 수량을 입력하세요.")
+                else:
+                    calculated_quantity = st.session_state.accumulated_quantity
 
                 st.markdown("---")
 
                 # Form 시작 (최종 수량 및 기타 정보 입력용)
                 with st.form("buy_record_form"):
 
-                    # 최종 수량 입력 (수정 가능)
+                    # 최종 수량 입력 (완전 자유 입력)
+                    st.markdown("#### 📦 최종 매수 수량")
                     col1, col2 = st.columns(2)
                     with col1:
                         quantity = st.number_input(
-                            "📦 최종 매수 수량 *",
-                            min_value=1,
-                            value=calculated_quantity if calculated_quantity > 0 else 1,
+                            "수량 (주) *",
+                            min_value=0,
+                            value=calculated_quantity,
                             step=1,
-                            help="위에서 계산된 수량이 자동 입력됩니다. 수정 가능합니다."
+                            help="원하는 수량을 자유롭게 입력하세요. (0 입력 가능)",
+                            label_visibility="collapsed"
                         )
                     with col2:
-                        total_investment = buy_price * quantity
+                        total_investment = buy_price * quantity if quantity > 0 else 0
                         st.metric("총 투자금액", f"{total_investment:,}원")
 
                     # 매수일은 form 위에서 선택한 날짜 사용
@@ -1520,7 +1535,7 @@ except Exception as e:
                                 for key in ['searched_ticker', 'searched_name', 'searched_price', 'searched_chart',
                                            'searched_rsi', 'searched_macd', 'searched_adr',
                                            'searched_kospi_adr', 'searched_kosdaq_adr', 'date_selector',
-                                           'accumulated_quantity', 'accumulated_amount', 'buy_price_input']:
+                                           'accumulated_quantity', 'accumulated_amount', 'buy_price_input', 'direct_input_mode']:
                                     if key in st.session_state:
                                         del st.session_state[key]
                                 # rerun 없이 상태만 초기화하여 사용자가 계속 작업할 수 있도록 함
