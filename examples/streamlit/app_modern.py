@@ -1316,24 +1316,82 @@ except Exception as e:
 
                 with st.form("buy_record_form"):
                     st.markdown("#### 💵 거래 정보")
-                    # 첫 번째 행: 매수가, 수량
+
+                    # 매수가 입력
+                    buy_price = st.number_input(
+                        "💰 매수가 (원) *",
+                        min_value=1,
+                        value=int(current_price) if current_price else 0,
+                        step=100,
+                        help="실제 매수한 가격을 입력해주세요"
+                    )
+
+                    st.markdown("---")
+                    st.markdown("#### 💸 투자 금액 선택")
+
+                    # 금액 선택 (라디오 버튼)
+                    amount_option = st.radio(
+                        "투자 금액을 선택하세요",
+                        ["💵 10만원", "💵 20만원", "💵 50만원", "💵 100만원", "✏️ 직접입력"],
+                        horizontal=True,
+                        help="선택한 금액에 맞춰 수량이 자동으로 계산됩니다"
+                    )
+
+                    # 초기 수량 값
+                    calculated_quantity = 1
+                    custom_amount = 0
+
+                    # 선택된 금액에 따라 수량 계산
+                    if amount_option == "💵 10만원":
+                        target_amount = 100000
+                    elif amount_option == "💵 20만원":
+                        target_amount = 200000
+                    elif amount_option == "💵 50만원":
+                        target_amount = 500000
+                    elif amount_option == "💵 100만원":
+                        target_amount = 1000000
+                    else:  # 직접입력
+                        custom_amount = st.number_input(
+                            "투자 금액 (원)",
+                            min_value=10000,
+                            value=100000,
+                            step=10000,
+                            help="원하는 투자 금액을 입력하세요"
+                        )
+                        target_amount = custom_amount
+
+                    # 수량 계산 및 표시
+                    if buy_price > 0 and target_amount > 0:
+                        calculated_quantity = int(target_amount / buy_price)
+                        total_amount = calculated_quantity * buy_price
+                        remaining = target_amount - total_amount
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("계산된 수량", f"{calculated_quantity}주")
+                        with col2:
+                            st.metric("총 투자금액", f"{total_amount:,}원")
+                        with col3:
+                            st.metric("잔액", f"{remaining:,}원")
+                    elif buy_price == 0:
+                        st.warning("⚠️ 매수가를 먼저 입력해주세요.")
+                        calculated_quantity = 1
+
+                    st.markdown("---")
+
+                    # 최종 수량 입력 (수정 가능)
                     col1, col2 = st.columns(2)
                     with col1:
-                        buy_price = st.number_input(
-                            "💰 매수가 (원) *",
+                        quantity = st.number_input(
+                            "📦 최종 매수 수량 *",
                             min_value=1,
-                            value=int(current_price) if current_price else 0,
-                            step=100,
-                            help="실제 매수한 가격을 입력해주세요"
+                            value=calculated_quantity if calculated_quantity > 0 else 1,
+                            step=1,
+                            help="위에서 계산된 수량이 자동 입력됩니다. 수정 가능합니다."
                         )
                     with col2:
-                        quantity = st.number_input(
-                            "📦 매수 수량 *",
-                            min_value=1,
-                            value=1,
-                            step=1,
-                            help="매수한 주식 수량"
-                        )
+                        total_investment = buy_price * quantity
+                        st.metric("총 투자금액", f"{total_investment:,}원")
 
                     # 매수일은 form 위에서 선택한 날짜 사용
                     buy_date = selected_date
