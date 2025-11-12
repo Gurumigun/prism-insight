@@ -1314,9 +1314,6 @@ except Exception as e:
 
                 st.markdown("---")
 
-                # Form 밖에서 매수가 입력 및 금액 선택
-                st.markdown("#### 💵 거래 정보")
-
                 # 매수가 입력 (form 밖에서 session_state에 저장)
                 if 'buy_price_input' not in st.session_state:
                     st.session_state.buy_price_input = int(current_price) if current_price else 0
@@ -1331,224 +1328,194 @@ except Exception as e:
                 )
                 st.session_state.buy_price_input = buy_price
 
-                st.markdown("---")
-                st.markdown("#### 💸 투자 금액 선택")
-                st.markdown("버튼을 클릭할 때마다 수량이 누적됩니다.")
-
                 # 세션 상태 초기화
                 if 'accumulated_quantity' not in st.session_state:
                     st.session_state.accumulated_quantity = 0
                 if 'accumulated_amount' not in st.session_state:
                     st.session_state.accumulated_amount = 0
-
-                # 금액 버튼들
-                col1, col2, col3, col4, col5 = st.columns(5)
-
-                with col1:
-                    if st.button("💵 10만원", use_container_width=True):
-                        if buy_price > 0:
-                            qty = int(100000 / buy_price)
-                            st.session_state.accumulated_quantity += qty
-                            st.session_state.accumulated_amount += qty * buy_price
-                        else:
-                            st.warning("매수가를 먼저 입력하세요")
-
-                with col2:
-                    if st.button("💵 20만원", use_container_width=True):
-                        if buy_price > 0:
-                            qty = int(200000 / buy_price)
-                            st.session_state.accumulated_quantity += qty
-                            st.session_state.accumulated_amount += qty * buy_price
-                        else:
-                            st.warning("매수가를 먼저 입력하세요")
-
-                with col3:
-                    if st.button("💵 50만원", use_container_width=True):
-                        if buy_price > 0:
-                            qty = int(500000 / buy_price)
-                            st.session_state.accumulated_quantity += qty
-                            st.session_state.accumulated_amount += qty * buy_price
-                        else:
-                            st.warning("매수가를 먼저 입력하세요")
-
-                with col4:
-                    if st.button("💵 100만원", use_container_width=True):
-                        if buy_price > 0:
-                            qty = int(1000000 / buy_price)
-                            st.session_state.accumulated_quantity += qty
-                            st.session_state.accumulated_amount += qty * buy_price
-                        else:
-                            st.warning("매수가를 먼저 입력하세요")
-
-                with col5:
-                    if st.button("🔄 초기화", type="secondary", use_container_width=True):
-                        st.session_state.accumulated_quantity = 0
-                        st.session_state.accumulated_amount = 0
-
-                # 직접 입력
-                st.markdown("##### ✏️ 직접 입력")
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    custom_amount = st.number_input(
-                        "투자 금액 (원)",
-                        min_value=0,
-                        value=0,
-                        step=10000,
-                        key="custom_amount_field",
-                        help="원하는 투자 금액을 입력하세요"
-                    )
-                with col2:
-                    st.markdown("<br>", unsafe_allow_html=True)  # 정렬을 위한 여백
-                    if st.button("➕ 추가", use_container_width=True):
-                        if buy_price > 0 and custom_amount > 0:
-                            qty = int(custom_amount / buy_price)
-                            st.session_state.accumulated_quantity += qty
-                            st.session_state.accumulated_amount += qty * buy_price
-                        else:
-                            st.warning("매수가와 금액을 입력하세요")
-
-                # 누적 수량 및 금액 표시
-                st.markdown("---")
-                col1, col2, col3 = st.columns([2, 2, 1])
-                with col1:
-                    st.metric("누적 수량", f"{st.session_state.accumulated_quantity}주",
-                             help="버튼 클릭으로 누적된 총 수량")
-                with col2:
-                    st.metric("누적 투자금액", f"{st.session_state.accumulated_amount:,}원",
-                             help="누적 수량 × 매수가")
-                with col3:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("📝 직접입력", use_container_width=True, help="누적 수량 무시하고 직접 입력"):
-                        # 직접 입력 모드 활성화
-                        st.session_state.direct_input_mode = True
-                        st.session_state.accumulated_quantity = 0
-                        st.session_state.accumulated_amount = 0
-
-                # 직접 입력 모드 상태 관리
                 if 'direct_input_mode' not in st.session_state:
                     st.session_state.direct_input_mode = False
 
-                # calculated_quantity 설정 (최종 수량 필드에 사용)
+                # calculated_quantity 설정
                 if st.session_state.direct_input_mode:
                     calculated_quantity = 0
-                    st.info("💡 직접 입력 모드: 아래에서 원하는 수량을 입력하세요.")
                 else:
                     calculated_quantity = st.session_state.accumulated_quantity
 
                 st.markdown("---")
 
-                # Form 시작 (최종 수량 및 기타 정보 입력용)
-                with st.form("buy_record_form"):
+                # 2열 레이아웃: 왼쪽(저장 데이터) / 오른쪽(참고 지표)
+                left_col, right_col = st.columns([1, 1])
 
-                    # 최종 수량 입력 (완전 자유 입력)
-                    st.markdown("#### 📦 최종 매수 수량")
+                # ========== 왼쪽: 저장할 데이터 입력 ==========
+                with left_col:
+                    st.markdown("### 📝 매수 정보 입력")
+
+                    # 투자 금액 선택
+                    st.markdown("#### 💸 투자 금액 선택")
+                    st.caption("버튼을 클릭할 때마다 수량이 누적됩니다.")
+
+                    # 금액 버튼들 (2행으로 배치)
                     col1, col2 = st.columns(2)
                     with col1:
+                        if st.button("💵 10만원", use_container_width=True, key="btn_100k"):
+                            if buy_price > 0:
+                                qty = int(100000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                        if st.button("💵 50만원", use_container_width=True, key="btn_500k"):
+                            if buy_price > 0:
+                                qty = int(500000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                    with col2:
+                        if st.button("💵 20만원", use_container_width=True, key="btn_200k"):
+                            if buy_price > 0:
+                                qty = int(200000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                        if st.button("💵 100만원", use_container_width=True, key="btn_1000k"):
+                            if buy_price > 0:
+                                qty = int(1000000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+
+                    # 직접 입력 및 초기화
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        custom_amount = st.number_input(
+                            "직접 입력 (원)",
+                            min_value=0,
+                            value=0,
+                            step=10000,
+                            key="custom_amount_field",
+                            label_visibility="collapsed"
+                        )
+                    with col2:
+                        if st.button("➕", use_container_width=True, help="추가"):
+                            if buy_price > 0 and custom_amount > 0:
+                                qty = int(custom_amount / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+
+                    # 초기화 및 직접입력 버튼
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("🔄 초기화", use_container_width=True, type="secondary"):
+                            st.session_state.accumulated_quantity = 0
+                            st.session_state.accumulated_amount = 0
+                    with col2:
+                        if st.button("📝 직접입력", use_container_width=True):
+                            st.session_state.direct_input_mode = True
+                            st.session_state.accumulated_quantity = 0
+                            st.session_state.accumulated_amount = 0
+
+                    # 누적 수량 표시
+                    st.markdown("---")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("누적 수량", f"{st.session_state.accumulated_quantity}주")
+                    with col2:
+                        st.metric("누적 금액", f"{st.session_state.accumulated_amount:,}원")
+
+                    if st.session_state.direct_input_mode:
+                        st.info("💡 직접 입력 모드: 아래에서 수량을 입력하세요.")
+
+                    st.markdown("---")
+
+                    # Form 시작
+                    with st.form("buy_record_form"):
+                        # 최종 수량 입력
+                        st.markdown("#### 📦 최종 매수 수량")
                         quantity = st.number_input(
                             "수량 (주) *",
                             min_value=0,
                             value=calculated_quantity,
                             step=1,
-                            help="원하는 수량을 자유롭게 입력하세요. (0 입력 가능)",
+                            help="원하는 수량을 입력하세요",
                             label_visibility="collapsed"
                         )
-                    with col2:
-                        total_investment = buy_price * quantity if quantity > 0 else 0
-                        st.metric("총 투자금액", f"{total_investment:,}원")
+                        st.metric("총 투자금액", f"{buy_price * quantity:,}원")
 
-                    # 매수일은 form 위에서 선택한 날짜 사용
-                    buy_date = selected_date
+                        # 매수일
+                        buy_date = selected_date
+                        st.markdown(f"**매수일:** {buy_date.strftime('%Y년 %m월 %d일')}")
 
-                    st.markdown("#### 📈 기술적 지표 (수정 가능)")
-                    # 두 번째 행: 기술적 지표
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    with col1:
-                        rsi = st.number_input(
-                            "RSI",
-                            min_value=0.0,
-                            max_value=100.0,
-                            value=float(rsi_value) if rsi_value else 50.0,
-                            step=0.1,
-                            help="상대강도지수 (0~100)"
-                        )
-                    with col2:
-                        macd = st.number_input(
-                            "MACD",
-                            value=float(macd_value) if macd_value else 0.0,
-                            step=0.1,
-                            help="이동평균수렴확산지수"
-                        )
-                    with col3:
-                        adr = st.number_input(
-                            "종목 ADR",
-                            min_value=0.0,
-                            value=float(adr_value) if adr_value else 0.0,
-                            step=0.1,
-                            help="평균 일일 변동폭"
-                        )
-                    with col4:
-                        market_kospi_adr = st.number_input(
-                            "코스피 ADR",
-                            min_value=0.0,
-                            value=float(kospi_adr_value) if kospi_adr_value else 0.0,
-                            step=0.1,
-                            help="코스피 시장 ADR"
-                        )
-                    with col5:
-                        market_kosdaq_adr = st.number_input(
-                            "코스닥 ADR",
-                            min_value=0.0,
-                            value=float(kosdaq_adr_value) if kosdaq_adr_value else 0.0,
-                            step=0.1,
-                            help="코스닥 시장 ADR"
+                        # 매수 이유
+                        st.markdown("---")
+                        st.markdown("#### 📝 매수 이유")
+                        reason = st.text_area(
+                            "매수 이유",
+                            placeholder="이 종목을 매수한 이유를 간단히 작성해주세요...",
+                            height=150,
+                            label_visibility="collapsed"
                         )
 
-                    st.markdown("#### 📝 투자 근거 (선택사항)")
-                    # 매수 이유
-                    reason = st.text_area(
-                        "매수 이유",
-                        placeholder="이 종목을 매수한 이유를 간단히 작성해주세요...",
-                        height=100,
-                        label_visibility="collapsed"
-                    )
-
-                    # 제출 버튼
-                    st.markdown("")  # 간격 추가
-                    st.markdown(f"**선택된 매수일:** {buy_date.strftime('%Y년 %m월 %d일')}")
-                    st.markdown("")  # 간격 추가
-
-                    col1, col2, col3 = st.columns([1, 1, 1])
-                    with col2:
+                        # 제출 버튼
+                        st.markdown("---")
                         submitted = st.form_submit_button("💾 매수 기록 저장", use_container_width=True, type="primary")
 
-                    if submitted:
-                        if buy_price <= 0:
-                            st.error("❌ 매수가를 입력해주세요.")
-                        elif quantity <= 0:
-                            st.error("❌ 매수 수량을 입력해주세요.")
-                        else:
-                            # 저장 - buy_date를 전달
-                            if self.save_buy_record(ticker, stock_name, buy_price, buy_date, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
-                                st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
-                                st.info("💡 새로운 종목을 등록하려면 위에서 종목코드를 다시 입력하세요.")
-                                # 세션 상태 초기화 - 모든 관련 상태 제거
-                                for key in ['searched_ticker', 'searched_name', 'searched_price', 'searched_chart',
-                                           'searched_rsi', 'searched_macd', 'searched_adr',
-                                           'searched_kospi_adr', 'searched_kosdaq_adr', 'date_selector',
-                                           'accumulated_quantity', 'accumulated_amount', 'buy_price_input', 'direct_input_mode']:
-                                    if key in st.session_state:
-                                        del st.session_state[key]
-                                # rerun 없이 상태만 초기화하여 사용자가 계속 작업할 수 있도록 함
-                                # st.rerun()을 제거하여 form이 정상적으로 리셋되도록 함
+                # ========== 오른쪽: 참고 지표 ==========
+                with right_col:
+                    st.markdown("### 📊 참고 지표")
+                    st.caption("현재 종목의 기술적 지표입니다. (참고용)")
 
-                st.markdown("---")
+                    # 기술적 지표 표시
+                    st.markdown("#### 📈 기술적 지표")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("RSI", f"{float(rsi_value) if rsi_value else 50.0:.1f}")
+                        st.metric("종목 ADR", f"{float(adr_value) if adr_value else 0.0:.1f}%")
+                    with col2:
+                        st.metric("MACD", f"{float(macd_value) if macd_value else 0.0:.1f}")
+                        st.metric("코스피 ADR", f"{float(kospi_adr_value) if kospi_adr_value else 0.0:.1f}%")
 
-                # 차트 표시 (매수 정보 입력 아래로 이동)
-                if chart_df is not None and not chart_df.empty:
-                    st.markdown("#### 📈 주가 차트 (최근 100일)")
-                    fig = self.create_stock_chart(chart_df, stock_name)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                    st.markdown("---")
+
+                    # 차트 표시
+                    if chart_base64:
+                        st.markdown("#### 📈 주가 차트")
+                        st.image(f"data:image/png;base64,{chart_base64}", use_container_width=True)
+
+                    st.markdown("---")
+
+                    # 현재 가격 정보
+                    st.markdown("#### 💰 가격 정보")
+                    if current_price:
+                        st.metric("현재가", f"{int(current_price):,}원")
+                        if buy_price > 0:
+                            diff = buy_price - int(current_price)
+                            diff_pct = (diff / int(current_price)) * 100
+                            st.metric("매수가와 차이",
+                                     f"{diff:,}원",
+                                     f"{diff_pct:+.2f}%")
+
+                # Form 제출 로직 처리
+                if submitted:
+                    if buy_price <= 0:
+                        st.error("❌ 매수가를 입력해주세요.")
+                    elif quantity <= 0:
+                        st.error("❌ 매수 수량을 입력해주세요.")
+                    else:
+                        # 기술적 지표 기본값 설정
+                        rsi = float(rsi_value) if rsi_value else 50.0
+                        macd = float(macd_value) if macd_value else 0.0
+                        adr = float(adr_value) if adr_value else 0.0
+                        market_kospi_adr = float(kospi_adr_value) if kospi_adr_value else 0.0
+                        market_kosdaq_adr = float(kosdaq_adr_value) if kosdaq_adr_value else 0.0
+
+                        # 저장 - buy_date를 전달
+                        if self.save_buy_record(ticker, stock_name, buy_price, buy_date, quantity, rsi, macd, adr, market_kospi_adr, market_kosdaq_adr, reason):
+                            st.success(f"✅ {stock_name}({ticker}) {quantity}주 매수 기록이 저장되었습니다!")
+                            st.info("💡 새로운 종목을 등록하려면 위에서 종목코드를 다시 입력하세요.")
+                            # 세션 상태 초기화 - 모든 관련 상태 제거
+                            for key in ['searched_ticker', 'searched_name', 'searched_price', 'searched_chart',
+                                       'searched_rsi', 'searched_macd', 'searched_adr',
+                                       'searched_kospi_adr', 'searched_kosdaq_adr', 'date_selector',
+                                       'accumulated_quantity', 'accumulated_amount', 'buy_price_input', 'direct_input_mode']:
+                                if key in st.session_state:
+                                    del st.session_state[key]
+
 
         # 탭 2: 보유 종목 조회
         with tab2:
