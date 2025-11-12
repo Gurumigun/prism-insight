@@ -1223,112 +1223,11 @@ except Exception as e:
                 kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
 
                 st.success(f"✅ 종목 조회 완료: {stock_name} ({ticker})")
-
-                # 종목 정보 카드
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("종목명", stock_name)
-                with col2:
-                    st.metric("종목코드", ticker)
-                with col3:
-                    if current_price:
-                        st.metric("현재가", f"{current_price:,.0f}원")
-                    else:
-                        st.metric("현재가", "조회 실패")
-
                 st.markdown("---")
-
-                # 매수 정보 입력 폼 (차트 위로 이동)
-                st.markdown("### 💰 매수 정보 입력")
-
-                # 기술적 지표 현재 값 표시 (읽기 전용)
-                st.markdown("#### 📊 자동 계산된 기술적 지표")
-                ind_col1, ind_col2, ind_col3, ind_col4, ind_col5 = st.columns(5)
-                with ind_col1:
-                    st.metric("RSI", f"{rsi_value:.2f}" if rsi_value else "N/A", help="상대강도지수 (0~100)")
-                with ind_col2:
-                    st.metric("MACD", f"{macd_value:.2f}" if macd_value else "N/A", help="이동평균수렴확산지수")
-                with ind_col3:
-                    st.metric("종목 ADR", f"{adr_value:.2f}" if adr_value else "N/A", help="평균 일일 변동폭")
-                with ind_col4:
-                    st.metric("코스피 ADR", f"{kospi_adr_value:.2f}" if kospi_adr_value else "N/A", help="코스피 시장 ADR")
-                with ind_col5:
-                    st.metric("코스닥 ADR", f"{kosdaq_adr_value:.2f}" if kosdaq_adr_value else "N/A", help="코스닥 시장 ADR")
-
-                st.markdown("---")
-
-                # 날짜 선택 및 재계산 영역 (form 외부)
-                st.markdown("#### 📅 매수일 선택")
-                date_col1, date_col2 = st.columns([2, 1])
-                with date_col1:
-                    selected_date = st.date_input(
-                        "매수일을 선택하세요",
-                        value=datetime.now(),
-                        max_value=datetime.now(),
-                        help="매수한 날짜를 선택하면 해당 날짜의 기술적 지표를 계산할 수 있습니다",
-                        key="date_selector"
-                    )
-                with date_col2:
-                    st.markdown("")  # 여백
-                    recalc_button = st.button(
-                        "📊 이 날짜로 지표 재계산",
-                        use_container_width=True,
-                        type="secondary"
-                    )
-
-                # 재계산 버튼이 눌렸을 때
-                if recalc_button:
-                    with st.spinner(f"📅 {selected_date.strftime('%Y-%m-%d')} 기준 기술적 지표를 계산하고 있습니다..."):
-                        # 해당 날짜 기준으로 기술적 지표 재계산
-                        _, price_at_date, chart_df_date, rsi_date, macd_date, adr_date = self.get_stock_info(
-                            ticker,
-                            selected_date
-                        )
-
-                        if price_at_date:
-                            # 시장 ADR도 해당 날짜 기준으로 재계산
-                            date_str = selected_date.strftime("%Y%m%d")
-                            kospi_adr_date, kosdaq_adr_date = self.calculate_market_adr(date_str)
-
-                            # 세션 상태 업데이트
-                            st.session_state.searched_price = price_at_date
-                            st.session_state.searched_chart = chart_df_date
-                            st.session_state.searched_rsi = rsi_date
-                            st.session_state.searched_macd = macd_date
-                            st.session_state.searched_adr = adr_date
-                            st.session_state.searched_kospi_adr = kospi_adr_date
-                            st.session_state.searched_kosdaq_adr = kosdaq_adr_date
-
-                            st.success(f"✅ {selected_date.strftime('%Y-%m-%d')} 기준 지표가 업데이트되었습니다!")
-                            st.rerun()
-                        else:
-                            st.error("❌ 해당 날짜의 데이터를 가져올 수 없습니다. 영업일을 선택해주세요.")
-
-                # 현재 세션 상태의 값 다시 읽기
-                current_price = st.session_state.searched_price
-                rsi_value = st.session_state.get('searched_rsi', 0)
-                macd_value = st.session_state.get('searched_macd', 0)
-                adr_value = st.session_state.get('searched_adr', 0)
-                kospi_adr_value = st.session_state.get('searched_kospi_adr', 0)
-                kosdaq_adr_value = st.session_state.get('searched_kosdaq_adr', 0)
-
-                st.markdown("---")
-
-                # 매수가 입력 (form 밖에서 session_state에 저장)
-                if 'buy_price_input' not in st.session_state:
-                    st.session_state.buy_price_input = int(current_price) if current_price else 0
-
-                buy_price = st.number_input(
-                    "💰 매수가 (원) *",
-                    min_value=1,
-                    value=st.session_state.buy_price_input,
-                    step=100,
-                    key="buy_price_field",
-                    help="실제 매수한 가격을 입력해주세요"
-                )
-                st.session_state.buy_price_input = buy_price
 
                 # 세션 상태 초기화
+                if 'buy_price_input' not in st.session_state:
+                    st.session_state.buy_price_input = int(current_price) if current_price else 0
                 if 'accumulated_quantity' not in st.session_state:
                     st.session_state.accumulated_quantity = 0
                 if 'accumulated_amount' not in st.session_state:
@@ -1336,13 +1235,18 @@ except Exception as e:
                 if 'direct_input_mode' not in st.session_state:
                     st.session_state.direct_input_mode = False
 
+                # 매수일 선택 (기본값)
+                if 'date_selector' not in st.session_state:
+                    st.session_state.date_selector = datetime.now()
+
                 # calculated_quantity 설정
                 if st.session_state.direct_input_mode:
                     calculated_quantity = 0
                 else:
                     calculated_quantity = st.session_state.accumulated_quantity
 
-                st.markdown("---")
+                # chart_base64 정의 (오류 수정)
+                chart_base64 = st.session_state.get('searched_chart_base64', None)
 
                 # 2열 레이아웃: 왼쪽(저장 데이터) / 오른쪽(참고 지표)
                 left_col, right_col = st.columns([1, 1])
@@ -1350,6 +1254,17 @@ except Exception as e:
                 # ========== 왼쪽: 저장할 데이터 입력 ==========
                 with left_col:
                     st.markdown("### 📝 매수 정보 입력")
+
+                    # 매수가 입력
+                    buy_price = st.number_input(
+                        "💰 매수가 (원) *",
+                        min_value=1,
+                        value=st.session_state.buy_price_input,
+                        step=100,
+                        key="buy_price_field",
+                        help="실제 매수한 가격을 입력해주세요"
+                    )
+                    st.session_state.buy_price_input = buy_price
 
                     # 투자 금액 선택
                     st.markdown("#### 💸 투자 금액 선택")
@@ -1437,9 +1352,8 @@ except Exception as e:
                         )
                         st.metric("총 투자금액", f"{buy_price * quantity:,}원")
 
-                        # 매수일
-                        buy_date = selected_date
-                        st.markdown(f"**매수일:** {buy_date.strftime('%Y년 %m월 %d일')}")
+                        # 매수일 (오른쪽에서 선택된 날짜 사용)
+                        buy_date = st.session_state.date_selector
 
                         # 매수 이유
                         st.markdown("---")
@@ -1457,11 +1371,75 @@ except Exception as e:
 
                 # ========== 오른쪽: 참고 지표 ==========
                 with right_col:
-                    st.markdown("### 📊 참고 지표")
-                    st.caption("현재 종목의 기술적 지표입니다. (참고용)")
+                    st.markdown("### 📊 종목 정보 및 참고 지표")
+
+                    # 종목 정보 카드
+                    st.markdown("#### 📌 종목 정보")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("종목명", stock_name)
+                        if current_price:
+                            st.metric("현재가", f"{int(current_price):,}원")
+                    with col2:
+                        st.metric("종목코드", ticker)
+                        if buy_price > 0 and current_price:
+                            diff = buy_price - int(current_price)
+                            diff_pct = (diff / int(current_price)) * 100
+                            st.metric("매수가 차이", f"{diff:,}원", f"{diff_pct:+.2f}%")
+
+                    st.markdown("---")
+
+                    # 매수일 선택 및 재계산
+                    st.markdown("#### 📅 매수일 선택")
+                    selected_date = st.date_input(
+                        "매수일을 선택하세요",
+                        value=st.session_state.date_selector if isinstance(st.session_state.date_selector, datetime) else datetime.now(),
+                        max_value=datetime.now(),
+                        help="매수한 날짜를 선택하면 해당 날짜의 기술적 지표를 계산할 수 있습니다",
+                        key="date_selector_input"
+                    )
+                    st.session_state.date_selector = selected_date
+
+                    recalc_button = st.button(
+                        "📊 이 날짜로 지표 재계산",
+                        use_container_width=True,
+                        type="secondary",
+                        key="recalc_btn"
+                    )
+
+                    # 재계산 버튼이 눌렸을 때
+                    if recalc_button:
+                        with st.spinner(f"📅 {selected_date.strftime('%Y-%m-%d')} 기준 기술적 지표를 계산하고 있습니다..."):
+                            # 해당 날짜 기준으로 기술적 지표 재계산
+                            _, price_at_date, chart_df_date, rsi_date, macd_date, adr_date = self.get_stock_info(
+                                ticker,
+                                selected_date
+                            )
+
+                            if price_at_date:
+                                # 시장 ADR도 해당 날짜 기준으로 재계산
+                                date_str = selected_date.strftime("%Y%m%d")
+                                kospi_adr_date, kosdaq_adr_date = self.calculate_market_adr(date_str)
+
+                                # 세션 상태 업데이트
+                                st.session_state.searched_price = price_at_date
+                                st.session_state.searched_chart = chart_df_date
+                                st.session_state.searched_rsi = rsi_date
+                                st.session_state.searched_macd = macd_date
+                                st.session_state.searched_adr = adr_date
+                                st.session_state.searched_kospi_adr = kospi_adr_date
+                                st.session_state.searched_kosdaq_adr = kosdaq_adr_date
+
+                                st.success(f"✅ {selected_date.strftime('%Y-%m-%d')} 기준 지표가 업데이트되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("❌ 해당 날짜의 데이터를 가져올 수 없습니다. 영업일을 선택해주세요.")
+
+                    st.markdown("---")
 
                     # 기술적 지표 표시
                     st.markdown("#### 📈 기술적 지표")
+                    st.caption(f"기준일: {selected_date.strftime('%Y년 %m월 %d일')}")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric("RSI", f"{float(rsi_value) if rsi_value else 50.0:.1f}")
@@ -1473,22 +1451,11 @@ except Exception as e:
                     st.markdown("---")
 
                     # 차트 표시
-                    if chart_base64:
+                    if chart_df is not None and not chart_df.empty:
                         st.markdown("#### 📈 주가 차트")
-                        st.image(f"data:image/png;base64,{chart_base64}", use_container_width=True)
-
-                    st.markdown("---")
-
-                    # 현재 가격 정보
-                    st.markdown("#### 💰 가격 정보")
-                    if current_price:
-                        st.metric("현재가", f"{int(current_price):,}원")
-                        if buy_price > 0:
-                            diff = buy_price - int(current_price)
-                            diff_pct = (diff / int(current_price)) * 100
-                            st.metric("매수가와 차이",
-                                     f"{diff:,}원",
-                                     f"{diff_pct:+.2f}%")
+                        fig = self.create_stock_chart(chart_df, stock_name)
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True, key="chart_right")
 
                 # Form 제출 로직 처리
                 if submitted:
