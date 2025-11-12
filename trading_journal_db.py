@@ -1000,6 +1000,104 @@ class TradingJournalDB:
             self.conn.close()
             logger.info("데이터베이스 연결 종료")
 
+    def reset_database(self) -> bool:
+        """
+        데이터베이스를 초기화합니다 (모든 데이터 삭제)
+
+        ⚠️ 주의: 이 작업은 되돌릴 수 없습니다!
+
+        Returns:
+            bool: 초기화 성공 여부
+        """
+        try:
+            logger.warning("⚠️  데이터베이스 초기화 시작...")
+
+            # 모든 테이블 삭제
+            self.cursor.execute("DROP TABLE IF EXISTS stock_holdings")
+            self.cursor.execute("DROP TABLE IF EXISTS trading_history")
+            self.conn.commit()
+
+            logger.info("✅ 기존 테이블 삭제 완료")
+
+            # 테이블 재생성
+            self._create_tables()
+
+            logger.info("✅ 데이터베이스 초기화 완료")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 데이터베이스 초기화 실패: {str(e)}")
+            self.conn.rollback()
+            return False
+
+    def backup_database(self, backup_path: str = None) -> bool:
+        """
+        현재 데이터베이스를 백업합니다
+
+        Args:
+            backup_path: 백업 파일 경로 (지정하지 않으면 자동 생성)
+
+        Returns:
+            bool: 백업 성공 여부
+        """
+        try:
+            import shutil
+            from datetime import datetime
+
+            if backup_path is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = f"{self.db_path}.backup_{timestamp}"
+
+            # 현재 연결 커밋
+            self.conn.commit()
+
+            # 파일 복사
+            shutil.copy2(self.db_path, backup_path)
+
+            logger.info(f"✅ 데이터베이스 백업 완료: {backup_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 데이터베이스 백업 실패: {str(e)}")
+            return False
+
+    def get_database_stats(self) -> Dict[str, Any]:
+        """
+        데이터베이스 통계 정보 반환
+
+        Returns:
+            dict: 데이터베이스 통계 정보
+        """
+        try:
+            # stock_holdings 레코드 수
+            self.cursor.execute("SELECT COUNT(*) FROM stock_holdings WHERE is_sold = 0")
+            open_positions = self.cursor.fetchone()[0]
+
+            self.cursor.execute("SELECT COUNT(*) FROM stock_holdings WHERE is_sold = 1")
+            sold_positions = self.cursor.fetchone()[0]
+
+            # trading_history 레코드 수
+            self.cursor.execute("SELECT COUNT(*) FROM trading_history")
+            history_count = self.cursor.fetchone()[0]
+
+            # 데이터베이스 파일 크기
+            import os
+            file_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
+            file_size_mb = file_size / (1024 * 1024)
+
+            return {
+                'open_positions': open_positions,
+                'sold_positions': sold_positions,
+                'history_records': history_count,
+                'total_records': open_positions + sold_positions + history_count,
+                'file_size_mb': round(file_size_mb, 2),
+                'db_path': self.db_path
+            }
+
+        except Exception as e:
+            logger.error(f"데이터베이스 통계 조회 실패: {str(e)}")
+            return {}
+
     def __enter__(self):
         """컨텍스트 매니저 진입"""
         return self
