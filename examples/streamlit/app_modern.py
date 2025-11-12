@@ -1328,54 +1328,93 @@ except Exception as e:
 
                     st.markdown("---")
                     st.markdown("#### 💸 투자 금액 선택")
+                    st.markdown("버튼을 클릭할 때마다 수량이 누적됩니다.")
 
-                    # 금액 선택 (라디오 버튼)
-                    amount_option = st.radio(
-                        "투자 금액을 선택하세요",
-                        ["💵 10만원", "💵 20만원", "💵 50만원", "💵 100만원", "✏️ 직접입력"],
-                        horizontal=True,
-                        help="선택한 금액에 맞춰 수량이 자동으로 계산됩니다"
-                    )
+                    # 세션 상태 초기화
+                    if 'accumulated_quantity' not in st.session_state:
+                        st.session_state.accumulated_quantity = 0
+                    if 'accumulated_amount' not in st.session_state:
+                        st.session_state.accumulated_amount = 0
 
-                    # 초기 수량 값
-                    calculated_quantity = 1
-                    custom_amount = 0
+                    # 금액 버튼들
+                    col1, col2, col3, col4, col5 = st.columns(5)
 
-                    # 선택된 금액에 따라 수량 계산
-                    if amount_option == "💵 10만원":
-                        target_amount = 100000
-                    elif amount_option == "💵 20만원":
-                        target_amount = 200000
-                    elif amount_option == "💵 50만원":
-                        target_amount = 500000
-                    elif amount_option == "💵 100만원":
-                        target_amount = 1000000
-                    else:  # 직접입력
+                    with col1:
+                        if st.button("💵 10만원", use_container_width=True):
+                            if buy_price > 0:
+                                qty = int(100000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                            else:
+                                st.warning("매수가를 먼저 입력하세요")
+
+                    with col2:
+                        if st.button("💵 20만원", use_container_width=True):
+                            if buy_price > 0:
+                                qty = int(200000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                            else:
+                                st.warning("매수가를 먼저 입력하세요")
+
+                    with col3:
+                        if st.button("💵 50만원", use_container_width=True):
+                            if buy_price > 0:
+                                qty = int(500000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                            else:
+                                st.warning("매수가를 먼저 입력하세요")
+
+                    with col4:
+                        if st.button("💵 100만원", use_container_width=True):
+                            if buy_price > 0:
+                                qty = int(1000000 / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                            else:
+                                st.warning("매수가를 먼저 입력하세요")
+
+                    with col5:
+                        if st.button("🔄 초기화", type="secondary", use_container_width=True):
+                            st.session_state.accumulated_quantity = 0
+                            st.session_state.accumulated_amount = 0
+                            st.rerun()
+
+                    # 직접 입력
+                    st.markdown("##### ✏️ 직접 입력")
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
                         custom_amount = st.number_input(
                             "투자 금액 (원)",
-                            min_value=10000,
-                            value=100000,
+                            min_value=0,
+                            value=0,
                             step=10000,
                             help="원하는 투자 금액을 입력하세요"
                         )
-                        target_amount = custom_amount
+                    with col2:
+                        st.markdown("<br>", unsafe_allow_html=True)  # 정렬을 위한 여백
+                        if st.button("➕ 추가", use_container_width=True):
+                            if buy_price > 0 and custom_amount > 0:
+                                qty = int(custom_amount / buy_price)
+                                st.session_state.accumulated_quantity += qty
+                                st.session_state.accumulated_amount += qty * buy_price
+                                st.rerun()
+                            else:
+                                st.warning("매수가와 금액을 입력하세요")
 
-                    # 수량 계산 및 표시
-                    if buy_price > 0 and target_amount > 0:
-                        calculated_quantity = int(target_amount / buy_price)
-                        total_amount = calculated_quantity * buy_price
-                        remaining = target_amount - total_amount
+                    # 누적 수량 및 금액 표시
+                    st.markdown("---")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("누적 수량", f"{st.session_state.accumulated_quantity}주",
+                                 help="버튼 클릭으로 누적된 총 수량")
+                    with col2:
+                        st.metric("누적 투자금액", f"{st.session_state.accumulated_amount:,}원",
+                                 help="누적 수량 × 매수가")
 
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("계산된 수량", f"{calculated_quantity}주")
-                        with col2:
-                            st.metric("총 투자금액", f"{total_amount:,}원")
-                        with col3:
-                            st.metric("잔액", f"{remaining:,}원")
-                    elif buy_price == 0:
-                        st.warning("⚠️ 매수가를 먼저 입력해주세요.")
-                        calculated_quantity = 1
+                    # calculated_quantity 설정 (최종 수량 필드에 사용)
+                    calculated_quantity = st.session_state.accumulated_quantity if st.session_state.accumulated_quantity > 0 else 1
 
                     st.markdown("---")
 
